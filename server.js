@@ -666,6 +666,21 @@ app.post('/api/queue/clear', (req, res) => {
   });
 });
 
+// POST: Guardar dispositivo de audio predeterminado
+app.post('/api/audio-device', (req, res) => {
+  const { audioDevice } = req.body;
+
+  if (audioDevice !== undefined) {
+    savedAudioDevice = audioDevice;
+    saveState();
+    broadcastStatus(); // Notificar a todos los clientes
+    console.log('[Audio-Device] Dispositivo guardado:', audioDevice);
+    res.json({ success: true, audioDevice: savedAudioDevice });
+  } else {
+    res.status(400).json({ error: 'audioDevice requerido' });
+  }
+});
+
 // GET: Listar dispositivos de audio disponibles
 app.get('/api/audio-devices', (req, res) => {
   console.log('[Audio-Devices] 📡 Iniciando búsqueda de dispositivos...');

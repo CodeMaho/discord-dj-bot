@@ -265,21 +265,36 @@ function updateStatus(data) {
         updateProgress(song);
     }
 
-    // Guardar y actualizar selector de dispositivo
+    // Guardar y actualizar selector de dispositivo desde el servidor
     if (audioDevice) {
         savedAudioDevice = audioDevice;
-        if (elements.audioDevice && elements.audioDevice.querySelector(`option[value="${audioDevice}"]`)) {
-            elements.audioDevice.value = audioDevice;
-        }
+        selectAudioDevice(audioDevice);
     }
 
     // Actualizar cola
     updateQueueDisplay(queue);
 }
 
+// Seleccionar dispositivo de audio en el dropdown
+function selectAudioDevice(deviceId) {
+    if (!elements.audioDevice || !deviceId) return;
+
+    // Buscar la opción que coincide
+    const options = elements.audioDevice.options;
+    for (let i = 0; i < options.length; i++) {
+        if (options[i].value === deviceId) {
+            elements.audioDevice.selectedIndex = i;
+            console.log('[AudioDevice] Seleccionado:', deviceId);
+            return true;
+        }
+    }
+    console.log('[AudioDevice] No encontrado en lista:', deviceId);
+    return false;
+}
+
 function updateNowPlaying(song) {
     if (!song) return;
-    
+
     // Actualizar título
     if (elements.currentSong) {
         elements.currentSong.textContent = song.title || 'Ninguna canción';
@@ -463,24 +478,28 @@ async function loadAudioDevices() {
         elements.audioDevice.innerHTML = '<option value="">Selecciona un dispositivo...</option>';
         
         // Agregar dispositivos
-        let foundSavedDevice = false;
+        let cableDeviceId = null;
         devices.forEach((device, idx) => {
             const isCable = device.name.toLowerCase().includes('cable');
             const option = document.createElement('option');
             option.value = device.id;
             option.textContent = (isCable ? '⭐ ' : '') + device.name;
 
-            // Prioridad: 1) dispositivo guardado del servidor, 2) CABLE si no hay guardado
-            if (savedAudioDevice && device.id === savedAudioDevice) {
-                option.selected = true;
-                foundSavedDevice = true;
-            } else if (!savedAudioDevice && isCable && !foundSavedDevice) {
-                option.selected = true;
+            // Recordar el primer dispositivo CABLE
+            if (isCable && !cableDeviceId) {
+                cableDeviceId = device.id;
             }
 
             elements.audioDevice.appendChild(option);
-            console.log(`  [${idx + 1}] ${option.textContent}${option.selected ? ' (seleccionado)' : ''}`);
+            console.log(`  [${idx + 1}] ${option.textContent}`);
         });
+
+        // Seleccionar dispositivo: prioridad servidor > CABLE > ninguno
+        if (savedAudioDevice && selectAudioDevice(savedAudioDevice)) {
+            console.log('[Load-Devices] Dispositivo del servidor seleccionado');
+        } else if (cableDeviceId && selectAudioDevice(cableDeviceId)) {
+            console.log('[Load-Devices] CABLE seleccionado por defecto');
+        }
         
         console.log('[Load-Devices] ✅ Dispositivos cargados exitosamente');
         showNotification('✅ Éxito', `Se encontraron ${devices.length} dispositivo(s) de audio`, 'success');
@@ -548,6 +567,25 @@ function attachEventListeners() {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 playMedia();
+            }
+        });
+    }
+
+    // Guardar dispositivo de audio en el servidor cuando se cambie
+    if (elements.audioDevice) {
+        elements.audioDevice.addEventListener('change', async (e) => {
+            const audioDevice = e.target.value;
+            if (audioDevice) {
+                try {
+                    await fetch(`${getBackendUrl()}/api/audio-device`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ audioDevice })
+                    });
+                    console.log('[AudioDevice] Guardado en servidor:', audioDevice);
+                } catch (error) {
+                    console.error('[AudioDevice] Error guardando:', error);
+                }
             }
         });
     }
