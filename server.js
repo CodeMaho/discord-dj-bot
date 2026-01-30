@@ -62,6 +62,60 @@ let activeConnections = 0;
 let manualStop = false; // Flag para diferenciar stop manual vs finalización natural
 let disconnectTimer = null; // Timer para grace period al desconectar
 let isStartingPlayback = false; // Lock para evitar reproducciones simultáneas
+let cachedAudioDevices = []; // Cache de dispositivos de audio
+
+// Función para cargar dispositivos de audio (usado al inicio y para refrescar)
+function loadAudioDevices() {
+  return new Promise((resolve) => {
+    console.log('[Audio-Devices] Cargando dispositivos...');
+    const mpvProcess = spawn('mpv', ['--audio-device=help'], { shell: true });
+
+    let output = '';
+    let errorOutput = '';
+
+    const timeout = setTimeout(() => {
+      console.log('[Audio-Devices] Timeout cargando dispositivos');
+      mpvProcess.kill();
+      resolve([]);
+    }, 10000);
+
+    mpvProcess.stdout.on('data', (data) => {
+      output += data.toString();
+    });
+
+    mpvProcess.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+    });
+
+    mpvProcess.on('close', () => {
+      clearTimeout(timeout);
+      const fullOutput = output || errorOutput;
+      const devices = [];
+      const lines = fullOutput.split('\n');
+
+      lines.forEach(line => {
+        line = line.trim();
+        const match = line.match(/^'([^']+)'\s*\((.+)\)$/);
+        if (match) {
+          devices.push({
+            id: match[1],
+            name: match[2].trim()
+          });
+        }
+      });
+
+      console.log(`[Audio-Devices] ${devices.length} dispositivo(s) encontrado(s)`);
+      cachedAudioDevices = devices;
+      resolve(devices);
+    });
+
+    mpvProcess.on('error', () => {
+      clearTimeout(timeout);
+      console.log('[Audio-Devices] Error ejecutando MPV');
+      resolve([]);
+    });
+  });
+}
 
 // WebSocket para actualizaciones en tiempo real (mismo servidor HTTP)
 const wss = new WebSocket.Server({ server });
@@ -681,92 +735,26 @@ app.post('/api/audio-device', (req, res) => {
   }
 });
 
-// GET: Listar dispositivos de audio disponibles
-app.get('/api/audio-devices', (req, res) => {
-  console.log('[Audio-Devices] 📡 Iniciando búsqueda de dispositivos...');
-  
-  // Obtener dispositivos de audio válidos
-  const mpvProcess = spawn('mpv', ['--audio-device=help'], { shell: true });
-  
-  let output = '';
-  let errorOutput = '';
-  let responded = false; // Flag para evitar doble respuesta
-  
-  const sendResponse = (devices) => {
-    if (!responded) {
-      responded = true;
-      console.log(`[Audio-Devices] ✅ Enviando ${devices.length} dispositivo(s)`);
-      res.json({ devices });
-    }
-  };
-  
-  // Timeout de 5 segundos para evitar bloqueos
-  const timeout = setTimeout(() => {
-    console.log('[Audio-Devices] ⚠️ TIMEOUT - MPV no respondió en 5 segundos');
-    sendResponse([]);
-    mpvProcess.kill();
-  }, 5000);
+// GET: Listar dispositivos de audio disponibles (usa caché)
+app.get('/api/audio-devices', async (req, res) => {
+  const refresh = req.query.refresh === 'true';
 
-  mpvProcess.stdout.on('data', (data) => {
-    const chunk = data.toString().trim();
-    output += chunk + '\n';
-    if (chunk.length > 0) {
-      console.log('[MPV stdout]', chunk);
-    }
-  });
-  
-  mpvProcess.stderr.on('data', (data) => {
-    const chunk = data.toString().trim();
-    errorOutput += chunk + '\n';
-    if (chunk.length > 0) {
-      console.log('[MPV stderr]', chunk);
-    }
-  });
-  
-  mpvProcess.on('close', (code) => {
-    clearTimeout(timeout);
-    console.log(`[Audio-Devices] Process cerrado con código: ${code}`);
-    
-    const fullOutput = output || errorOutput;
-    const devices = [];
-    const lines = fullOutput.split('\n');
-    
-    // Parsear salida de MPV
-    lines.forEach(line => {
-      line = line.trim();
-      
-      // Buscar líneas con formato: 'device-id' (Description)
-      // Ejemplo: 'wasapi/{...}' (CABLE Input (VB-Audio Virtual Cable))
-      const match = line.match(/^'([^']+)'\s*\((.+)\)$/);
-      if (match) {
-        const deviceId = match[1];
-        const deviceName = match[2].trim();
-        
-        devices.push({
-          id: deviceId,
-          name: deviceName
-        });
-      }
-    });
-    
-    console.log(`[Audio-Devices] 📊 Total: ${devices.length} dispositivo(s) detectado(s)`);
-    devices.forEach((dev, idx) => {
-      console.log(`  [${idx + 1}] ${dev.name}`);
-    });
-    
-    sendResponse(devices);
-  });
-  
-  mpvProcess.on('error', (error) => {
-    console.error('[Audio-Devices] ❌ Error al iniciar MPV:', error.message);
-    console.error('[Audio-Devices] Código de error:', error.code);
-    clearTimeout(timeout);
-    sendResponse([]);
-  });
+  if (refresh || cachedAudioDevices.length === 0) {
+    console.log('[Audio-Devices] Refrescando lista de dispositivos...');
+    await loadAudioDevices();
+  }
+
+  console.log(`[Audio-Devices] Enviando ${cachedAudioDevices.length} dispositivo(s) (desde caché)`);
+  res.json({ devices: cachedAudioDevices });
 });
 
 // Cargar estado al iniciar
 loadState();
+
+// Cargar dispositivos de audio al iniciar (para caché)
+loadAudioDevices().then(() => {
+  console.log('[Startup] Dispositivos de audio cargados en caché');
+});
 
 // ===== INTERVALO DE BROADCAST EN TIEMPO REAL =====
 // Enviar actualización de estado cada 500ms mientras se está reproduciendo
