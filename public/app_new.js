@@ -1,8 +1,42 @@
-﻿// ============================================
+// ============================================
 // Discord DJ Controller - Frontend
 // ============================================
 
-// Estado de la aplicación
+// ============================================
+// CONFIGURACIÓN DEL BACKEND
+// ============================================
+
+// URL del backend (por defecto usa la misma URL del frontend)
+let backendUrl = localStorage.getItem('backendUrl') || '';
+
+function getBackendUrl() {
+    if (backendUrl) {
+        return backendUrl.replace(/\/$/, ''); // Quitar trailing slash
+    }
+    // Si no hay URL configurada, usar la misma del frontend
+    return window.location.origin;
+}
+
+function getWebSocketUrl() {
+    const base = getBackendUrl();
+    const protocol = base.startsWith('https') ? 'wss:' : 'ws:';
+    const host = base.replace(/^https?:\/\//, '');
+    return `${protocol}//${host}`;
+}
+
+function saveBackendUrl(url) {
+    backendUrl = url;
+    if (url) {
+        localStorage.setItem('backendUrl', url);
+    } else {
+        localStorage.removeItem('backendUrl');
+    }
+}
+
+// ============================================
+// ESTADO DE LA APLICACIÓN
+// ============================================
+
 let ws = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
@@ -37,7 +71,14 @@ const elements = {
     clearQueueBtn: document.getElementById('clearQueueBtn'),
     progressFill: document.getElementById('progressFill'),
     currentTime: document.getElementById('currentTime'),
-    totalTime: document.getElementById('totalTime')
+    totalTime: document.getElementById('totalTime'),
+    // Configuración del backend
+    backendUrlInput: document.getElementById('backendUrlInput'),
+    saveBackendBtn: document.getElementById('saveBackendBtn'),
+    resetBackendBtn: document.getElementById('resetBackendBtn'),
+    currentBackendUrl: document.getElementById('currentBackendUrl'),
+    settingsToggle: document.getElementById('settingsToggle'),
+    settingsPanel: document.getElementById('settingsPanel')
 };
 
 // ============================================
@@ -45,6 +86,8 @@ const elements = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Inicializar UI de configuración del backend
+    initBackendSettings();
     attachEventListeners();
     // Primero restaurar estado para obtener el dispositivo guardado
     await restoreState();
@@ -55,15 +98,83 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ============================================
+// CONFIGURACIÓN DEL BACKEND UI
+// ============================================
+
+function initBackendSettings() {
+    // Mostrar URL actual
+    updateBackendUrlDisplay();
+
+    // Cargar URL guardada en el input
+    if (elements.backendUrlInput && backendUrl) {
+        elements.backendUrlInput.value = backendUrl;
+    }
+
+    // Toggle del panel de configuración
+    if (elements.settingsToggle) {
+        elements.settingsToggle.addEventListener('click', () => {
+            if (elements.settingsPanel) {
+                elements.settingsPanel.classList.toggle('hidden');
+                elements.settingsToggle.textContent =
+                    elements.settingsPanel.classList.contains('hidden') ? '⚙️' : '✕';
+            }
+        });
+    }
+
+    // Guardar URL del backend
+    if (elements.saveBackendBtn) {
+        elements.saveBackendBtn.addEventListener('click', () => {
+            const newUrl = elements.backendUrlInput?.value.trim() || '';
+            saveBackendUrl(newUrl);
+            updateBackendUrlDisplay();
+            showNotification('Guardado', 'URL del backend actualizada. Reconectando...', 'success');
+
+            // Reconectar WebSocket con nueva URL
+            if (ws) {
+                ws.close();
+            }
+            reconnectAttempts = 0;
+            setTimeout(() => initializeWebSocket(), 500);
+        });
+    }
+
+    // Resetear URL del backend
+    if (elements.resetBackendBtn) {
+        elements.resetBackendBtn.addEventListener('click', () => {
+            saveBackendUrl('');
+            if (elements.backendUrlInput) {
+                elements.backendUrlInput.value = '';
+            }
+            updateBackendUrlDisplay();
+            showNotification('Reseteado', 'Usando servidor local. Reconectando...', 'info');
+
+            // Reconectar WebSocket
+            if (ws) {
+                ws.close();
+            }
+            reconnectAttempts = 0;
+            setTimeout(() => initializeWebSocket(), 500);
+        });
+    }
+}
+
+function updateBackendUrlDisplay() {
+    if (elements.currentBackendUrl) {
+        const url = getBackendUrl();
+        elements.currentBackendUrl.textContent = url;
+        elements.currentBackendUrl.title = url;
+    }
+}
+
+// ============================================
 // WEBSOCKET
 // ============================================
 
 function initializeWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname;
-    const port = window.location.port ? `:${window.location.port}` : '';
-    
-    ws = new WebSocket(`${protocol}//${host}${port.replace('3000', '3001')}`);
+    const wsUrl = getWebSocketUrl();
+    console.log('[WebSocket] Conectando a:', wsUrl);
+
+    ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
         console.log('WebSocket conectado');
@@ -303,7 +414,7 @@ function updateButtonStates() {
 
 async function restoreState() {
     try {
-        const res = await fetch('/api/status');
+        const res = await fetch(`${getBackendUrl()}/api/status`);
         const data = await res.json();
         if (data) {
             // Guardar dispositivo antes de updateStatus para que loadAudioDevices lo use
@@ -324,9 +435,9 @@ async function restoreState() {
 
 async function loadAudioDevices() {
     console.log('[Load-Devices] 🔊 Iniciando carga de dispositivos...');
-    
+
     try {
-        const response = await fetch('/api/audio-devices');
+        const response = await fetch(`${getBackendUrl()}/api/audio-devices`);
         console.log('[Load-Devices] ✅ Response recibida, status:', response.status);
         
         const data = await response.json();
@@ -477,7 +588,7 @@ async function playMedia() {
     
     try {
         console.log('[Play] Enviando request a servidor...');
-        const response = await fetch('/api/play', {
+        const response = await fetch(`${getBackendUrl()}/api/play`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, audioDevice })
@@ -527,7 +638,7 @@ async function addToQueue() {
 
     try {
         console.log('[AddQueue] Añadiendo a la cola...');
-        const response = await fetch('/api/queue', {
+        const response = await fetch(`${getBackendUrl()}/api/queue`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url })
@@ -556,7 +667,7 @@ async function stopMedia() {
     
     try {
         console.log('[Stop] Enviando petición al servidor...');
-        const response = await fetch('/api/stop', { method: 'POST' });
+        const response = await fetch(`${getBackendUrl()}/api/stop`, { method: 'POST' });
         
         if (!response.ok) {
             const data = await response.json();
@@ -599,7 +710,7 @@ async function skipMedia() {
     elements.skipBtn.disabled = true;
     
     try {
-        const response = await fetch('/api/skip', { method: 'POST' });
+        const response = await fetch(`${getBackendUrl()}/api/skip`, { method: 'POST' });
         
         if (!response.ok) {
             const data = await response.json();
@@ -618,7 +729,7 @@ async function skipMedia() {
 
 async function removeFromQueue(index) {
     try {
-        const response = await fetch(`/api/queue/${index}`, { method: 'DELETE' });
+        const response = await fetch(`${getBackendUrl()}/api/queue/${index}`, { method: 'DELETE' });
         
         if (!response.ok) {
             const data = await response.json();
@@ -642,7 +753,7 @@ async function clearQueue() {
     elements.clearQueueBtn.disabled = true;
     
     try {
-        const response = await fetch('/api/queue/clear', { method: 'POST' });
+        const response = await fetch(`${getBackendUrl()}/api/queue/clear`, { method: 'POST' });
         
         if (!response.ok) {
             const data = await response.json();
