@@ -10,6 +10,36 @@ const YTDlpWrap = require('yt-dlp-wrap').default;
 const app = express();
 const PORT = process.env.PORT || 3000;
 const STATE_FILE = path.join(__dirname, 'player-state.json');
+const CONFIG_FILE = path.join(__dirname, 'server-config.json');
+
+// Configuración del servidor (compartida con todos los clientes)
+let serverConfig = {
+  backendUrl: '',  // URL pública del backend (túnel de Cloudflare)
+  audioDevice: ''  // Dispositivo de audio seleccionado
+};
+
+// Cargar configuración del servidor
+function loadServerConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      serverConfig = { ...serverConfig, ...data };
+      console.log('[Config] Configuración cargada:', serverConfig);
+    }
+  } catch (error) {
+    console.log('[Config] Error cargando configuración:', error.message);
+  }
+}
+
+// Guardar configuración del servidor
+function saveServerConfig() {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(serverConfig, null, 2));
+    console.log('[Config] Configuración guardada');
+  } catch (error) {
+    console.log('[Config] Error guardando configuración:', error.message);
+  }
+}
 
 // Crear servidor HTTP para compartir con WebSocket
 const server = http.createServer(app);
@@ -208,6 +238,15 @@ wss.on('connection', (ws) => {
       queue,
       queueLength: queue.length,
       audioDevice: savedAudioDevice
+    }
+  }));
+
+  // Enviar configuración del servidor
+  ws.send(JSON.stringify({
+    type: 'config',
+    data: {
+      backendUrl: serverConfig.backendUrl,
+      audioDevice: serverConfig.audioDevice || savedAudioDevice
     }
   }));
 
@@ -726,7 +765,9 @@ app.post('/api/audio-device', (req, res) => {
 
   if (audioDevice !== undefined) {
     savedAudioDevice = audioDevice;
+    serverConfig.audioDevice = audioDevice;
     saveState();
+    saveServerConfig();
     broadcastStatus(); // Notificar a todos los clientes
     console.log('[Audio-Device] Dispositivo guardado:', audioDevice);
     res.json({ success: true, audioDevice: savedAudioDevice });
@@ -734,6 +775,49 @@ app.post('/api/audio-device', (req, res) => {
     res.status(400).json({ error: 'audioDevice requerido' });
   }
 });
+
+// GET: Obtener configuración del servidor
+app.get('/api/config', (req, res) => {
+  res.json({
+    backendUrl: serverConfig.backendUrl,
+    audioDevice: serverConfig.audioDevice || savedAudioDevice
+  });
+});
+
+// POST: Guardar configuración del servidor
+app.post('/api/config', (req, res) => {
+  const { backendUrl, audioDevice } = req.body;
+
+  if (backendUrl !== undefined) {
+    serverConfig.backendUrl = backendUrl;
+  }
+  if (audioDevice !== undefined) {
+    serverConfig.audioDevice = audioDevice;
+    savedAudioDevice = audioDevice;
+  }
+
+  saveServerConfig();
+  broadcastConfig(); // Notificar a todos los clientes
+  console.log('[Config] Configuración actualizada:', serverConfig);
+  res.json({ success: true, config: serverConfig });
+});
+
+// Broadcast de configuración a todos los clientes
+function broadcastConfig() {
+  const configData = JSON.stringify({
+    type: 'config',
+    data: {
+      backendUrl: serverConfig.backendUrl,
+      audioDevice: serverConfig.audioDevice || savedAudioDevice
+    }
+  });
+
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(configData);
+    }
+  });
+}
 
 // GET: Listar dispositivos de audio disponibles (usa caché)
 app.get('/api/audio-devices', async (req, res) => {
@@ -748,8 +832,17 @@ app.get('/api/audio-devices', async (req, res) => {
   res.json({ devices: cachedAudioDevices });
 });
 
-// Cargar estado al iniciar
+// Cargar estado y configuración al iniciar
+loadServerConfig();
 loadState();
+
+// Sincronizar audioDevice entre config y state
+if (serverConfig.audioDevice) {
+  savedAudioDevice = serverConfig.audioDevice;
+} else if (savedAudioDevice) {
+  serverConfig.audioDevice = savedAudioDevice;
+  saveServerConfig();
+}
 
 // Cargar dispositivos de audio al iniciar (para caché)
 loadAudioDevices().then(() => {
