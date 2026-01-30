@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Config with secrets
+config.js
+
+# State files
+player-state.json
+
+# External binaries
+mpv-*/
+VBCABLE_Driver_Pack45/
+
+# Windows null file
+nul
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
