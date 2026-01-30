@@ -290,7 +290,7 @@ async function playWithMPV(url, audioDevice, title = null) {
       ];
       
       // Solo agregar dispositivo de audio si es válido
-      if (audioDevice && audioDevice.trim() && !audioDevice.includes('{')) {
+      if (audioDevice && audioDevice.trim()) {
         mpvArgs.push('--audio-device=' + audioDevice);
       }
       
