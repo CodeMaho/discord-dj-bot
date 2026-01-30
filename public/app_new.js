@@ -6,16 +6,8 @@
 // CONFIGURACIÓN DEL BACKEND
 // ============================================
 
-// Usar configuración del archivo config.js (si existe) o localStorage como fallback
-function getConfiguredBackendUrl() {
-    // Prioridad: config.js > localStorage > vacío
-    if (typeof DJ_CONFIG !== 'undefined' && DJ_CONFIG.BACKEND_URL) {
-        return DJ_CONFIG.BACKEND_URL;
-    }
-    return localStorage.getItem('backendUrl') || '';
-}
-
-let backendUrl = getConfiguredBackendUrl();
+// URL del backend: localStorage para recordar entre sesiones
+let backendUrl = localStorage.getItem('backendUrl') || '';
 
 function getBackendUrl() {
     if (backendUrl) {
@@ -32,7 +24,7 @@ function getWebSocketUrl() {
     return `${protocol}//${host}`;
 }
 
-function saveBackendUrl(url) {
+function saveBackendUrlLocal(url) {
     backendUrl = url;
     if (url) {
         localStorage.setItem('backendUrl', url);
@@ -41,12 +33,36 @@ function saveBackendUrl(url) {
     }
 }
 
-function shouldShowSettings() {
-    // Mostrar settings si está habilitado en config.js o si no hay config.js
-    if (typeof DJ_CONFIG !== 'undefined') {
-        return DJ_CONFIG.SHOW_SETTINGS === true;
+// Guardar configuración en el servidor
+async function saveConfigToServer(config) {
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        const data = await response.json();
+        if (data.success) {
+            console.log('[Config] Guardado en servidor:', config);
+        }
+        return data;
+    } catch (error) {
+        console.error('[Config] Error guardando en servidor:', error);
+        return null;
     }
-    return true; // Por defecto mostrar (modo desarrollo/local)
+}
+
+// Cargar configuración del servidor
+async function loadConfigFromServer() {
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/config`);
+        const config = await response.json();
+        console.log('[Config] Cargado del servidor:', config);
+        return config;
+    } catch (error) {
+        console.error('[Config] Error cargando del servidor:', error);
+        return null;
+    }
 }
 
 // ============================================
@@ -118,18 +134,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================
 
 function initBackendSettings() {
-    // Ocultar botón de configuración si no está habilitado
-    if (!shouldShowSettings()) {
-        if (elements.settingsToggle) {
-            elements.settingsToggle.style.display = 'none';
-        }
-        if (elements.settingsPanel) {
-            elements.settingsPanel.style.display = 'none';
-        }
-        console.log('[Config] Panel de configuración oculto (SHOW_SETTINGS=false)');
-        return;
-    }
-
     // Mostrar URL actual
     updateBackendUrlDisplay();
 
@@ -151,25 +155,37 @@ function initBackendSettings() {
 
     // Guardar URL del backend
     if (elements.saveBackendBtn) {
-        elements.saveBackendBtn.addEventListener('click', () => {
+        elements.saveBackendBtn.addEventListener('click', async () => {
             const newUrl = elements.backendUrlInput?.value.trim() || '';
-            saveBackendUrl(newUrl);
+
+            // Guardar localmente primero (para poder reconectar)
+            saveBackendUrlLocal(newUrl);
             updateBackendUrlDisplay();
-            showNotification('Guardado', 'URL del backend actualizada. Reconectando...', 'success');
 
             // Reconectar WebSocket con nueva URL
             if (ws) {
                 ws.close();
             }
             reconnectAttempts = 0;
-            setTimeout(() => initializeWebSocket(), 500);
+
+            showNotification('Guardando', 'Conectando al nuevo servidor...', 'info');
+
+            // Esperar a reconectar y luego guardar en el servidor
+            setTimeout(async () => {
+                initializeWebSocket();
+                // Esperar a que se establezca la conexión
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                // Guardar en el servidor remoto
+                await saveConfigToServer({ backendUrl: newUrl });
+                showNotification('Guardado', 'Configuración guardada en el servidor', 'success');
+            }, 500);
         });
     }
 
-    // Resetear URL del backend
+    // Resetear URL del backend (usar servidor local)
     if (elements.resetBackendBtn) {
-        elements.resetBackendBtn.addEventListener('click', () => {
-            saveBackendUrl('');
+        elements.resetBackendBtn.addEventListener('click', async () => {
+            saveBackendUrlLocal('');
             if (elements.backendUrlInput) {
                 elements.backendUrlInput.value = '';
             }
@@ -191,6 +207,26 @@ function updateBackendUrlDisplay() {
         const url = getBackendUrl();
         elements.currentBackendUrl.textContent = url;
         elements.currentBackendUrl.title = url;
+    }
+}
+
+// Manejar actualización de configuración desde el servidor
+function handleConfigUpdate(config) {
+    if (!config) return;
+
+    // Actualizar URL del backend si viene del servidor y es diferente
+    if (config.backendUrl && config.backendUrl !== backendUrl) {
+        console.log('[Config] URL del servidor actualizada:', config.backendUrl);
+        // Solo actualizar el input, no reconectar (ya estamos conectados)
+        if (elements.backendUrlInput) {
+            elements.backendUrlInput.value = config.backendUrl;
+        }
+    }
+
+    // Actualizar dispositivo de audio
+    if (config.audioDevice) {
+        savedAudioDevice = config.audioDevice;
+        selectAudioDevice(config.audioDevice);
     }
 }
 
@@ -219,13 +255,18 @@ function initializeWebSocket() {
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
-            
+
             if (data.type === 'status' && data.data) {
                 // Log detallado para debugging
                 const song = data.data.currentSong;
                 console.log(`[WS Update] Status: ${song?.status}, Elapsed: ${song?.elapsed}s, Queue: ${data.data.queueLength} items`);
-                
+
                 updateStatus(data.data);
+            }
+
+            if (data.type === 'config' && data.data) {
+                console.log('[WS Config] Recibida configuración:', data.data);
+                handleConfigUpdate(data.data);
             }
         } catch (error) {
             console.error('Error procesando mensaje WebSocket:', error);
@@ -457,6 +498,7 @@ function updateButtonStates() {
 
 async function restoreState() {
     try {
+        // Cargar estado del reproductor
         const res = await fetch(`${getBackendUrl()}/api/status`);
         const data = await res.json();
         if (data) {
@@ -466,6 +508,12 @@ async function restoreState() {
                 console.log('[RestoreState] Dispositivo guardado:', savedAudioDevice);
             }
             updateStatus(data);
+        }
+
+        // Cargar configuración del servidor
+        const config = await loadConfigFromServer();
+        if (config) {
+            handleConfigUpdate(config);
         }
     } catch (error) {
         console.error('Error restaurando estado:', error);
