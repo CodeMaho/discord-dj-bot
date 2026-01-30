@@ -6,8 +6,16 @@
 // CONFIGURACIÓN DEL BACKEND
 // ============================================
 
-// URL del backend (por defecto usa la misma URL del frontend)
-let backendUrl = localStorage.getItem('backendUrl') || '';
+// Usar configuración del archivo config.js (si existe) o localStorage como fallback
+function getConfiguredBackendUrl() {
+    // Prioridad: config.js > localStorage > vacío
+    if (typeof DJ_CONFIG !== 'undefined' && DJ_CONFIG.BACKEND_URL) {
+        return DJ_CONFIG.BACKEND_URL;
+    }
+    return localStorage.getItem('backendUrl') || '';
+}
+
+let backendUrl = getConfiguredBackendUrl();
 
 function getBackendUrl() {
     if (backendUrl) {
@@ -31,6 +39,14 @@ function saveBackendUrl(url) {
     } else {
         localStorage.removeItem('backendUrl');
     }
+}
+
+function shouldShowSettings() {
+    // Mostrar settings si está habilitado en config.js o si no hay config.js
+    if (typeof DJ_CONFIG !== 'undefined') {
+        return DJ_CONFIG.SHOW_SETTINGS === true;
+    }
+    return true; // Por defecto mostrar (modo desarrollo/local)
 }
 
 // ============================================
@@ -102,6 +118,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================
 
 function initBackendSettings() {
+    // Ocultar botón de configuración si no está habilitado
+    if (!shouldShowSettings()) {
+        if (elements.settingsToggle) {
+            elements.settingsToggle.style.display = 'none';
+        }
+        if (elements.settingsPanel) {
+            elements.settingsPanel.style.display = 'none';
+        }
+        console.log('[Config] Panel de configuración oculto (SHOW_SETTINGS=false)');
+        return;
+    }
+
     // Mostrar URL actual
     updateBackendUrlDisplay();
 

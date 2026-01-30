@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Config with secrets
+# Config with secrets (but allow public/config.js for frontend)
 config.js
+!public/config.js
 
 # State files
 player-state.json
