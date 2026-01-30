@@ -1,0 +1,480 @@
+// Estado de la aplicación
+let ws = null;
+let reconnectTimer = null;
+let currentStatus = {
+    url: '',
+    title: 'Ninguna',
+    status: 'stopped'
+};
+
+// Elementos del DOM
+const elements = {
+    urlInput: document.getElementById('urlInput'),
+    audioDevice: document.getElementById('audioDevice'),
+    playBtn: document.getElementById('playBtn'),
+    stopBtn: document.getElementById('stopBtn'),
+    clearBtn: document.getElementById('clearBtn'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    currentSong: document.getElementById('currentSong'),
+    statusText: document.getElementById('statusText'),
+    statusIndicator: document.querySelector('.status-indicator'),
+    connectionStatus: document.getElementById('connectionStatus'),
+    queueCount: document.getElementById('queueCount'),
+    queueContainer: document.getElementById('queueContainer'),
+    skipBtn: document.getElementById('skipBtn'),
+    clearQueueBtn: document.getElementById('clearQueueBtn')
+};
+
+// Inicialización
+document.addEventListener('DOMContentLoaded', () => {
+    initializeWebSocket();
+    loadAudioDevices();
+    attachEventListeners();
+    restoreState();
+});
+
+// WebSocket
+function initializeWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname;
+    ws = new WebSocket(`${protocol}//${host}:3001`);
+    
+    ws.onopen = () => {
+        console.log('WebSocket conectado');
+        updateConnectionStatus(true);
+        showNotification('Conectado', 'Conexión establecida con el servidor', 'success');
+        
+        // Limpiar timer de reconexión
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'status') {
+                updateStatus(data.data);
+            }
+        } catch (error) {
+            console.error('Error procesando mensaje:', error);
+        }
+    };
+    
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+    
+    ws.onclose = () => {
+        console.log('WebSocket desconectado');
+        updateConnectionStatus(false);
+        
+        // Intentar reconectar después de 3 segundos
+        reconnectTimer = setTimeout(() => {
+            console.log('Intentando reconectar...');
+            initializeWebSocket();
+        }, 3000);
+    };
+}
+
+function updateConnectionStatus(connected) {
+    if (connected) {
+        elements.connectionStatus.classList.add('connected');
+        elements.connectionStatus.classList.remove('disconnected');
+        elements.connectionStatus.querySelector('.status-text').textContent = 'Conectado';
+    } else {
+        elements.connectionStatus.classList.remove('connected');
+        elements.connectionStatus.classList.add('disconnected');
+        elements.connectionStatus.querySelector('.status-text').textContent = 'Desconectado';
+    }
+}
+
+// Cargar dispositivos de audio
+async function loadAudioDevices() {
+    try {
+        elements.audioDevice.innerHTML = '<option value="">Cargando...</option>';
+        
+        const response = await fetch('/api/audio-devices');
+        const data = await response.json();
+        
+        if (data.devices && data.devices.length > 0) {
+            elements.audioDevice.innerHTML = '<option value="">Selecciona un dispositivo</option>';
+            
+            data.devices.forEach(device => {
+                const option = document.createElement('option');
+                option.value = device.id;
+                option.textContent = device.name;
+                
+                // Resaltar CABLE Input
+                if (device.name.toLowerCase().includes('cable') && device.name.toLowerCase().includes('input')) {
+                    option.textContent = `⭐ ${device.name}`;
+                }
+                
+                elements.audioDevice.appendChild(option);
+            });
+            
+            // Restaurar selección guardada
+            const savedDevice = localStorage.getItem('selectedAudioDevice');
+            if (savedDevice) {
+                elements.audioDevice.value = savedDevice;
+            }
+        } else {
+            elements.audioDevice.innerHTML = '<option value="">No se encontraron dispositivos</option>';
+        }
+    } catch (error) {
+        console.error('Error cargando dispositivos:', error);
+        elements.audioDevice.innerHTML = '<option value="">Error al cargar dispositivos</option>';
+        showNotification('Error', 'No se pudieron cargar los dispositivos de audio', 'error');
+    }
+}
+
+// Event Listeners
+function attachEventListeners() {
+    elements.playBtn.addEventListener('click', handlePlay);
+    elements.stopBtn.addEventListener('click', handleStop);
+    elements.clearBtn.addEventListener('click', handleClear);
+    elements.refreshBtn.addEventListener('click', handleRefresh);
+    elements.skipBtn.addEventListener('click', handleSkip);
+    elements.clearQueueBtn.addEventListener('click', handleClearQueue);
+    
+    // Enter para reproducir
+    elements.urlInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            handlePlay();
+        }
+    });
+    
+    // Guardar dispositivo seleccionado
+    elements.audioDevice.addEventListener('change', (e) => {
+        localStorage.setItem('selectedAudioDevice', e.target.value);
+    });
+    
+    // Auto-seleccionar texto al hacer clic en el input
+    elements.urlInput.addEventListener('focus', function() {
+        this.select();
+    });
+}
+
+// Handlers
+async function handlePlay() {
+    const url = elements.urlInput.value.trim();
+    const audioDevice = elements.audioDevice.value;
+    
+    if (!url) {
+        showNotification('URL requerida', 'Por favor ingresa una URL de YouTube', 'error');
+        elements.urlInput.focus();
+        return;
+    }
+    
+    if (!audioDevice) {
+        showNotification('Dispositivo requerido', 'Por favor selecciona un dispositivo de audio', 'error');
+        return;
+    }
+    
+    // Validar URL de YouTube
+    if (!isValidYouTubeUrl(url)) {
+        showNotification('URL inválida', 'Por favor ingresa una URL válida de YouTube', 'error');
+        return;
+    }
+    
+    // Deshabilitar botón
+    elements.playBtn.disabled = true;
+    elements.playBtn.innerHTML = '<span class="btn-icon">⏳</span> Cargando...';
+    
+    try {
+        const response = await fetch('/api/play', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ url, audioDevice })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showNotification('Reproduciendo', 'La canción se está reproduciendo', 'success');
+        } else {
+            throw new Error(data.error || 'Error desconocido');
+        }
+    } catch (error) {
+        console.error('Error al reproducir:', error);
+        showNotification('Error', error.message || 'No se pudo reproducir la canción', 'error');
+    } finally {
+        elements.playBtn.disabled = false;
+        elements.playBtn.innerHTML = '<span class="btn-icon">▶️</span> Reproducir';
+    }
+}
+
+async function handleStop() {
+    elements.stopBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/stop', {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showNotification('Detenido', 'Reproducción detenida', 'info');
+        }
+    } catch (error) {
+        console.error('Error al detener:', error);
+        showNotification('Error', 'No se pudo detener la reproducción', 'error');
+    } finally {
+        elements.stopBtn.disabled = false;
+    }
+}
+
+function handleClear() {
+    elements.urlInput.value = '';
+    elements.urlInput.focus();
+}
+
+async function handleRefresh() {
+    elements.refreshBtn.disabled = true;
+    elements.refreshBtn.innerHTML = '<span class="btn-icon">⏳</span> Cargando...';
+    
+    await loadAudioDevices();
+    
+    elements.refreshBtn.disabled = false;
+    elements.refreshBtn.innerHTML = '<span class="btn-icon">🔄</span> Recargar Dispositivos';
+    
+    showNotification('Actualizado', 'Lista de dispositivos actualizada', 'success');
+}
+
+// Actualizar estado
+function updateStatus(status) {
+    currentStatus = status;
+    
+    // Actualizar título de la canción
+    elements.currentSong.textContent = status.title || 'Ninguna canción';
+    
+    // Actualizar estado
+    if (status.status === 'playing') {
+        elements.statusText.textContent = 'Reproduciendo';
+        elements.statusIndicator.className = 'status-indicator playing';
+    } else if (status.status === 'stopped') {
+        elements.statusText.textContent = 'Detenido';
+        elements.statusIndicator.className = 'status-indicator stopped';
+    } else if (status.status === 'error') {
+        elements.statusText.textContent = 'Error';
+        elements.statusIndicator.className = 'status-indicator stopped';
+    }
+    
+    // Actualizar cola
+    updateQueue(status.queue || []);
+}
+
+// Validación de URL
+function isValidYouTubeUrl(url) {
+    const patterns = [
+        /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/,
+        /^(https?:\/\/)?(www\.)?youtube\.com\/watch\?v=.+$/,
+        /^(https?:\/\/)?(www\.)?youtu\.be\/.+$/,
+        /^(https?:\/\/)?(www\.)?youtube\.com\/playlist\?list=.+$/
+    ];
+    
+    return patterns.some(pattern => pattern.test(url));
+}
+
+// Sistema de notificaciones
+function showNotification(title, message, type = 'info') {
+    const container = document.getElementById('notifications');
+    
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️'
+    };
+    
+    notification.innerHTML = `
+        <div class="notification-icon">${icons[type]}</div>
+        <div class="notification-content">
+            <div class="notification-title">${title}</div>
+            <div class="notification-message">${message}</div>
+        </div>
+    `;
+    
+    container.appendChild(notification);
+    
+    // Auto-remover después de 5 segundos
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => {
+            container.removeChild(notification);
+        }, 300);
+    }, 5000);
+}
+
+// Animación de salida
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);
+
+// Actualizar renderizado de la cola
+function updateQueue(queue) {
+    elements.queueCount.textContent = `${queue.length} canción${queue.length !== 1 ? 'es' : ''}`;
+    
+    // Habilitar/deshabilitar botones
+    elements.skipBtn.disabled = queue.length === 0;
+    elements.clearQueueBtn.disabled = queue.length === 0;
+    
+    // Si la cola está vacía, mostrar mensaje
+    if (queue.length === 0) {
+        elements.queueContainer.innerHTML = `
+            <div class="empty-queue">
+                <span class="empty-icon">📭</span>
+                <p>Cola vacía</p>
+                <small>Agrega canciones o playlists para comenzar</small>
+            </div>
+        `;
+        return;
+    }
+    
+    // Renderizar elementos de la cola
+    let html = '';
+    queue.forEach((song, index) => {
+        html += `
+            <div class="queue-item">
+                <span class="queue-item-number">#${index + 1}</span>
+                <div class="queue-item-info">
+                    <div class="queue-item-title">${escapeHtml(song.title || 'Desconocido')}</div>
+                    <div class="queue-item-duration">⏱️ ${formatTime(song.duration || 0)}</div>
+                </div>
+                <button class="queue-item-remove" onclick="removeFromQueue(${index})" title="Eliminar">
+                    ✕
+                </button>
+            </div>
+        `;
+    });
+    
+    elements.queueContainer.innerHTML = html;
+}
+
+// Funciones manejadoras
+async function handleSkip() {
+    elements.skipBtn.disabled = true;
+    elements.skipBtn.innerHTML = '<span class="btn-icon">⏳</span> Saltando...';
+    
+    try {
+        const response = await fetch('/api/skip', {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showNotification('Saltado', 'Saltando a la siguiente canción', 'success');
+        } else {
+            const data = await response.json();
+            throw new Error(data.error || 'Error desconocido');
+        }
+    } catch (error) {
+        console.error('Error al saltar:', error);
+        showNotification('Error', error.message || 'No se pudo saltar la canción', 'error');
+    } finally {
+        elements.skipBtn.disabled = true;
+        elements.skipBtn.innerHTML = '<span class="btn-icon">⏭️</span> Saltar';
+    }
+}
+
+async function handleClearQueue() {
+    if (!confirm('¿Estás seguro de que deseas limpiar la cola?')) {
+        return;
+    }
+    
+    elements.clearQueueBtn.disabled = true;
+    elements.clearQueueBtn.innerHTML = '<span class="btn-icon">⏳</span> Limpiando...';
+    
+    try {
+        const response = await fetch('/api/queue/clear', {
+            method: 'POST'
+        });
+        
+        if (response.ok) {
+            showNotification('Limpiada', 'Cola limpiada correctamente', 'success');
+        } else {
+            const data = await response.json();
+            throw new Error(data.error || 'Error desconocido');
+        }
+    } catch (error) {
+        console.error('Error al limpiar cola:', error);
+        showNotification('Error', error.message || 'No se pudo limpiar la cola', 'error');
+    } finally {
+        elements.clearQueueBtn.disabled = true;
+        elements.clearQueueBtn.innerHTML = '<span class="btn-icon">🗑️</span> Limpiar Cola';
+    }
+}
+
+async function removeFromQueue(index) {
+    try {
+        const response = await fetch(`/api/queue/${index}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            showNotification('Eliminada', 'Canción eliminada de la cola', 'success');
+        } else {
+            const data = await response.json();
+            throw new Error(data.error || 'Error desconocido');
+        }
+    } catch (error) {
+        console.error('Error al eliminar:', error);
+        showNotification('Error', error.message || 'No se pudo eliminar la canción', 'error');
+    }
+}
+
+// Utilidades
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+function formatTime(seconds) {
+    if (!seconds || seconds === 0) return 'Desconocida';
+    
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes}m`;
+    }
+    return `${minutes}m ${secs}s`;
+}
+
+// Restaurar dispositivo y estado al cargar
+function restoreState() {
+    const savedDevice = localStorage.getItem('selectedAudioDevice');
+    if (savedDevice) {
+        elements.audioDevice.value = savedDevice;
+    }
+}
+
+// Manejo de visibilidad de la página
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) {
+        console.log('Página visible, reconectando WebSocket...');
+        initializeWebSocket();
+    }
+});
