@@ -1,351 +1,181 @@
-# 🎵 Discord DJ Web Controller
+# Discord DJ Web Controller
 
-Sistema completo para reproducir música de YouTube en Discord sin usar bots oficiales, mediante un controlador web y Virtual Audio Cable.
+Sistema para reproducir musica de YouTube en Discord mediante un controlador web y Virtual Audio Cable. Funciona con llamadas privadas y canales de voz.
 
-## 📋 Tabla de Contenidos
+## Caracteristicas
 
-- [Características](#características)
-- [Requisitos](#requisitos)
-- [Instalación](#instalación)
-- [Configuración](#configuración)
-- [Uso](#uso)
-- [Solución de Problemas](#solución-de-problemas)
-- [Preguntas Frecuentes](#preguntas-frecuentes)
+- Panel web moderno con tema oscuro estilo Discord
+- Soporte de YouTube: videos individuales y playlists
+- Cola de reproduccion con auto-play
+- Actualizaciones en tiempo real via WebSocket
+- Acceso remoto desde cualquier dispositivo
+- Instalador automatico de dependencias
+- Arquitectura hibrida: frontend en hosting + backend local con tunel
 
----
+## Requisitos
 
-## ✨ Características
+- Windows 10/11
+- Conexion a internet
+- Cuenta secundaria de Discord (tu "cuenta DJ")
 
-- 🎮 **Panel web moderno** - Interfaz intuitiva y responsiva
-- 🎵 **Soporte completo de YouTube** - Videos, playlists, y YouTube Music
-- 🔄 **Actualizaciones en tiempo real** - WebSocket para estado en vivo
-- 📱 **Responsive** - Funciona en móvil, tablet y desktop
-- 🎧 **Multi-dispositivo** - Selección de dispositivo de audio
-- 🌙 **Dark Mode** - Diseño moderno estilo Discord
-- 🔔 **Notificaciones** - Feedback visual de todas las acciones
+## Instalacion Rapida
 
----
-
-## 📦 Requisitos
-
-### Software Requerido
-
-1. **Node.js** (v16 o superior)
-   - Descarga: https://nodejs.org/
-
-2. **MPV Media Player**
-   - Windows: https://mpv.io/installation/
-   - Descarga el instalador y asegúrate de agregar MPV al PATH del sistema
-
-3. **yt-dlp**
-   - Windows: Descarga `yt-dlp.exe` de https://github.com/yt-dlp/yt-dlp/releases
-   - Colócalo en una carpeta que esté en el PATH (o en `C:\Windows\System32`)
-
-4. **VB-Audio Virtual Cable**
-   - Descarga: https://vb-audio.com/Cable/
-   - Instala y reinicia tu PC
-
-### Cuenta de Discord
-
-- Una cuenta secundaria de Discord (tu "cuenta DJ")
-- Puede ser una cuenta nueva o una que ya tengas
-
----
-
-## 🚀 Instalación
-
-### Paso 1: Descargar el proyecto
+### 1. Descargar el proyecto
 
 ```bash
-# Crea una carpeta para el proyecto
-mkdir discord-dj-bot
+git clone https://github.com/CodeMaho/discord-dj-bot.git
 cd discord-dj-bot
 ```
 
-Copia todos los archivos del proyecto a esta carpeta.
+### 2. Ejecutar el instalador
 
-### Paso 2: Instalar dependencias de Node.js
+**Doble click en `INSTALL.bat`**
 
-```bash
-npm install
-```
+El instalador automaticamente:
+- Instala Node.js
+- Instala MPV (reproductor)
+- Instala yt-dlp (extractor de YouTube)
+- Instala Cloudflared (tunel para acceso remoto)
+- Guia para instalar VB-Audio Virtual Cable
+- Instala dependencias npm
 
-### Paso 3: Verificar instalación de software
+### 3. Configurar Discord
 
-```bash
-# Verificar MPV
-mpv --version
+Con tu cuenta DJ (secundaria):
 
-# Verificar yt-dlp
-yt-dlp --version
+1. Abre Discord → Configuracion → Voz y Video
+2. Dispositivo de Entrada: **CABLE Output (VB-Audio Virtual Cable)**
+3. Desactiva: Cancelacion de Eco, Supresion de Ruido, Ganancia Automatica
+4. Sensibilidad de entrada: al minimo
 
-# Verificar Node.js
-node --version
-```
+### 4. Iniciar el bot
 
-Si alguno de estos comandos falla, revisa la instalación de ese software.
+**Doble click en `START-DJ.bat`**
 
----
+Esto inicia:
+- Servidor Node.js en puerto 3000
+- Tunel de Cloudflare (para acceso remoto)
 
-## ⚙️ Configuración
+Veras una URL tipo `https://xxx.trycloudflare.com` - esta es tu URL de acceso remoto.
 
-### 1. Configurar VB-Audio Virtual Cable
+## Uso
 
-#### En Windows (Configuración de Audio):
+### Local
 
-1. **Click derecho en el icono de volumen** → "Sonidos" → Pestaña "Reproducción"
-2. **Verifica que aparezca "CABLE Input"** (debe estar habilitado)
+1. Abre http://localhost:3000
+2. Selecciona **CABLE Input** como dispositivo de audio
+3. Pega una URL de YouTube
+4. Click en Reproducir
+5. Une tu cuenta DJ a la llamada de Discord
 
-#### En Discord (Cuenta DJ):
+### Remoto (desde movil u otro PC)
 
-1. **Abre Discord** con tu cuenta secundaria (la que será el "DJ")
-2. **Ve a Configuración de Usuario** (⚙️) → **Voz y Video**
-3. **En "Dispositivo de Entrada"**, selecciona: **CABLE Output (VB-Audio Virtual Cable)**
-4. **Desactiva "Cancelación de Eco"** y **"Supresión de Ruido"**
-5. **Desactiva "Detección Automática de Sensibilidad"** y ajusta manualmente al mínimo
+1. Copia la URL del tunel (aparece al ejecutar START-DJ.bat)
+2. Abre esa URL en tu navegador
+3. Usa normalmente
 
-### 2. Unirse a una llamada
+### Con hosting propio (arquitectura hibrida)
 
-1. Con tu cuenta principal, **inicia una llamada privada** o únete a un canal de voz
-2. Con tu cuenta DJ (la secundaria), **únete a la misma llamada**
-3. Deja la cuenta DJ conectada (puede estar minimizada)
+Si tienes un dominio/hosting:
 
----
+1. Sube la carpeta `public/` a tu hosting
+2. Ejecuta `START-DJ.bat` en tu PC
+3. En tu web, click en ⚙️ (configuracion)
+4. Pega la URL del tunel de Cloudflare
+5. Guarda
 
-## 🎮 Uso
+Ahora tu web publica controla el backend en tu PC.
 
-### Iniciar el servidor
-
-```bash
-npm start
-```
-
-O para desarrollo con auto-reload:
-
-```bash
-npm run dev
-```
-
-Verás este mensaje:
+## Estructura del proyecto
 
 ```
-╔════════════════════════════════════════════════════════════╗
-║     🎵 Discord DJ Web Controller - Servidor Iniciado 🎵    ║
-╠════════════════════════════════════════════════════════════╣
-║                                                            ║
-║  Servidor HTTP:     http://localhost:3000                  ║
-║  WebSocket:         ws://localhost:3001                    ║
-║                                                            ║
-║  Panel de Control:  http://localhost:3000                  ║
-╚════════════════════════════════════════════════════════════╝
+discord-dj-bot/
+├── INSTALL.bat        # Instalador (ejecutar primero)
+├── START-DJ.bat       # Iniciar el bot
+├── server.js          # Backend Node.js
+├── package.json       # Dependencias
+├── public/            # Frontend (subir a hosting si quieres)
+│   ├── index.html
+│   ├── app_new.js
+│   └── styles.css
+├── README.md          # Esta documentacion
+├── INSTALL_WINDOWS.md # Guia detallada de instalacion
+└── TROUBLESHOOTING.md # Solucion de problemas
 ```
 
-### Usar el panel web
-
-1. **Abre tu navegador** y ve a: `http://localhost:3000`
-
-2. **Selecciona el dispositivo de audio**:
-   - En el selector, elige **"CABLE Input"** (aparecerá con una ⭐)
-
-3. **Pega una URL de YouTube**:
-   - Copia cualquier URL de YouTube (video o playlist)
-   - Pégala en el campo de texto
-
-4. **Dale al botón "Reproducir"**:
-   - La música comenzará a sonar en Discord
-   - Verás el título de la canción en tiempo real
-
-5. **Para detener**:
-   - Haz clic en "Detener"
-
-### Acceso remoto (desde tu móvil)
-
-Para acceder desde tu teléfono en la misma red WiFi:
-
-1. **Averigua la IP de tu PC**:
-   ```bash
-   ipconfig
-   # Busca "Dirección IPv4" (ej: 192.168.1.100)
-   ```
-
-2. **En tu móvil**, abre el navegador y ve a:
-   ```
-   http://192.168.1.100:3000
-   ```
-
-3. **¡Listo!** Ahora puedes controlar la música desde tu teléfono
-
----
-
-## 🔧 Solución de Problemas
-
-### No se escucha audio en Discord
-
-**Problema**: La música se reproduce pero no se escucha en Discord
-
-**Soluciones**:
-1. Verifica que en Discord (cuenta DJ):
-   - El micrófono esté en **"CABLE Output"**
-   - La **detección de sensibilidad esté al mínimo**
-   - Estés **conectado a la llamada**
-
-2. En el panel web, asegúrate de haber seleccionado **"CABLE Input"**
-
-3. Prueba ajustar el volumen de CABLE Input en Windows:
-   - Panel de Control → Sonido → Reproducción → CABLE Input → Propiedades → Niveles
-
-### Error: "MPV not found" o "yt-dlp not found"
-
-**Problema**: El servidor no puede encontrar MPV o yt-dlp
-
-**Soluciones**:
-1. Verifica la instalación:
-   ```bash
-   mpv --version
-   yt-dlp --version
-   ```
-
-2. Si alguno falla, **reinstala** y asegúrate de agregarlo al PATH:
-   - Windows: Variables de entorno → Path → Agregar la ruta de instalación
-
-3. Reinicia la terminal después de modificar el PATH
-
-### Error: "Cannot connect to WebSocket"
-
-**Problema**: El frontend no puede conectarse al servidor
-
-**Soluciones**:
-1. Verifica que el servidor esté corriendo (`npm start`)
-2. Revisa que el puerto 3000 y 3001 no estén ocupados
-3. Desactiva temporalmente el firewall/antivirus
-4. En el navegador, recarga la página (Ctrl + F5)
-
-### La música se corta o tiene lag
-
-**Problema**: El audio tiene interrupciones
-
-**Soluciones**:
-1. Cierra otros programas que usen mucho CPU/RAM
-2. En Discord, reduce la calidad de voz (96 kbps es suficiente)
-3. Usa YouTube Music en vez de videos (menos recursos)
-4. Verifica tu conexión a internet
-
-### Error: "spawn mpv ENOENT"
-
-**Problema**: Node.js no puede ejecutar MPV
-
-**Solución**:
-- En Windows, asegúrate de haber agregado MPV al PATH del sistema
-- Reinicia tu PC después de instalar MPV
-- Verifica la instalación: `mpv --version` en cmd
-
----
-
-## ❓ Preguntas Frecuentes
-
-### ¿Es esto legal?
-
-Sí, siempre y cuando:
-- Uses una cuenta personal (no automatices el login)
-- No lo uses para spam o abuso
-- Respetes los términos de servicio de YouTube
-
-### ¿Me pueden banear de Discord?
-
-No, porque:
-- **No modificas el cliente de Discord**
-- **No usas la API de Discord de forma no autorizada**
-- Solo estás transmitiendo audio a través del micrófono
-
-Es como si estuvieras reproduciendo música con altavoces cerca del micrófono.
-
-### ¿Funciona con playlists?
-
-Sí, MPV y yt-dlp soportan playlists completas de YouTube. Simplemente pega la URL de la playlist.
-
-### ¿Puedo usar esto en servidores de Discord?
-
-Sí, pero recuerda que necesitas una cuenta secundaria en el canal de voz. Es más práctico para llamadas privadas o servidores pequeños.
-
-### ¿Funciona con otras plataformas además de YouTube?
-
-Técnicamente sí, yt-dlp soporta cientos de sitios. Pero este proyecto está optimizado para YouTube. Puedes intentar con otras URLs compatibles.
-
-### ¿Puedo cambiar el puerto del servidor?
-
-Sí, edita `server.js`:
-
-```javascript
-const PORT = 3000; // Cambia esto
-```
-
-Y en `public/app.js`, actualiza la conexión WebSocket si cambias el puerto 3001.
-
-### ¿Puedo tener múltiples "cuentas DJ"?
-
-Sí, pero cada una necesita:
-- Su propia instancia del servidor (puerto diferente)
-- Su propio Virtual Audio Cable (puedes instalar múltiples)
-
----
-
-## 🛠️ Arquitectura del Sistema
+## Arquitectura
 
 ```
-┌─────────────────┐
-│   Tu Móvil/PC   │ ──────────► http://localhost:3000
-│   (Navegador)   │
-└─────────────────┘
-         │
-         │ WebSocket (Estado en tiempo real)
-         ▼
-┌─────────────────┐
-│  Node.js Server │ ──────────► Ejecuta MPV
-│  (Express + WS) │             con yt-dlp
-└─────────────────┘
-         │
-         │ Audio Output
-         ▼
-┌─────────────────┐
-│  CABLE Input    │ ──────────► Virtual Audio Cable
-└─────────────────┘
-         │
-         │ Audio Routing
-         ▼
-┌─────────────────┐
-│  CABLE Output   │ ──────────► Micrófono de Discord
-└─────────────────┘             (Cuenta DJ)
-         │
-         │ Transmisión de Voz
-         ▼
-┌─────────────────┐
-│   Discord Call  │ ──────────► Todos escuchan
-└─────────────────┘
+┌─────────────────────┐
+│   Navegador/Movil   │
+│   (Frontend)        │
+└──────────┬──────────┘
+           │ HTTP + WebSocket
+           ▼
+┌─────────────────────┐
+│   Tu PC (Backend)   │
+│   Node.js + MPV     │
+└──────────┬──────────┘
+           │ Audio
+           ▼
+┌─────────────────────┐
+│   CABLE Input       │
+│   (Virtual Cable)   │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│   CABLE Output      │
+│   (Mic en Discord)  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│   Llamada Discord   │
+│   (Todos escuchan)  │
+└─────────────────────┘
 ```
 
----
+## API
 
-## 📝 Notas Finales
+El servidor expone estos endpoints:
 
-- **Uso responsable**: Este sistema es para uso personal con amigos
-- **Calidad de audio**: Depende de tu conexión y la configuración de Discord
-- **Latencia**: Mínima, similar a hablar por micrófono normal
-- **Recursos**: MPV es muy ligero, pero la reproducción usa algo de CPU
+| Endpoint | Metodo | Descripcion |
+|----------|--------|-------------|
+| `/api/status` | GET | Estado actual |
+| `/api/play` | POST | Reproducir URL |
+| `/api/stop` | POST | Detener |
+| `/api/skip` | POST | Siguiente cancion |
+| `/api/queue` | GET | Obtener cola |
+| `/api/queue` | POST | Anadir a cola |
+| `/api/queue/:index` | DELETE | Eliminar de cola |
+| `/api/queue/clear` | POST | Limpiar cola |
+| `/api/audio-devices` | GET | Listar dispositivos |
 
----
+WebSocket en el mismo puerto para actualizaciones en tiempo real.
 
-## 🤝 Créditos
+## FAQ
 
-Desarrollado como una solución alternativa segura para compartir música en Discord sin usar bots oficiales.
+### ¿Es seguro? ¿Me pueden banear?
 
----
+No modificas Discord ni usas su API de forma no autorizada. Solo transmites audio por microfono, igual que si pusieras musica con altavoces.
 
-## 📄 Licencia
+### ¿Funciona con llamadas privadas?
 
-MIT License - Úsalo libremente para proyectos personales
+Si. A diferencia de los bots oficiales de Discord, este sistema funciona en llamadas privadas porque usa una cuenta normal.
 
----
+### ¿Puedo usarlo en varios servidores?
 
-**¿Tienes problemas?** Revisa la sección de [Solución de Problemas](#solución-de-problemas) o verifica que hayas seguido todos los pasos de [Configuración](#configuración).
+Si, pero la cuenta DJ debe estar en cada llamada. Para multiples llamadas simultaneas necesitarias multiples instancias.
 
-**¡Disfruta de tu Radio Station personal en Discord! 🎵**
+### ¿Que pasa si cierro START-DJ.bat?
+
+El servidor se detiene y la musica para. Tu PC debe estar encendida mientras quieras usar el bot.
+
+## Solucion de problemas
+
+Ver [TROUBLESHOOTING.md](TROUBLESHOOTING.md) para problemas comunes.
+
+## Licencia
+
+MIT License - Uso libre para proyectos personales.
