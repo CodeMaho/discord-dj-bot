@@ -14,11 +14,44 @@
                 <span class="icon">🎵</span>
                 <h1>Discord DJ Controller</h1>
             </div>
-            <div class="status-badge" id="connectionStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Conectando...</span>
+            <div class="header-right">
+                <div class="status-badge" id="connectionStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Conectando...</span>
+                </div>
+                <button class="btn-settings" id="settingsToggle" title="Configurar servidor">⚙️</button>
             </div>
         </header>
+
+        <!-- Panel de Configuración del Backend -->
+        <div class="settings-panel hidden" id="settingsPanel">
+            <div class="card">
+                <h3>🔧 Configuración del Servidor</h3>
+                <div class="settings-info">
+                    <span class="label">Servidor actual:</span>
+                    <code id="currentBackendUrl">-</code>
+                </div>
+                <div class="input-group">
+                    <label for="backendUrlInput">URL del Backend</label>
+                    <input
+                        type="text"
+                        id="backendUrlInput"
+                        placeholder="https://tu-servidor.com o dejar vacío para local"
+                    >
+                    <div class="input-hint">
+                        Deja vacío para usar el servidor local. Para conexión remota, introduce la URL del túnel (ej: https://tu-tunel.trycloudflare.com)
+                    </div>
+                </div>
+                <div class="button-group-small">
+                    <button class="btn btn-primary" id="saveBackendBtn">
+                        💾 Guardar
+                    </button>
+                    <button class="btn btn-secondary" id="resetBackendBtn">
+                        🔄 Usar Local
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- Main Content -->
         <main class="main-content">

@@ -1,17 +1,24 @@
 const express = require('express');
 const WebSocket = require('ws');
 const cors = require('cors');
+const http = require('http');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const STATE_FILE = path.join(__dirname, 'player-state.json');
 
-// Middleware
-app.use(cors());
+// Crear servidor HTTP para compartir con WebSocket
+const server = http.createServer(app);
+
+// Middleware - CORS configurado para permitir cualquier origen (necesario para arquitectura híbrida)
+app.use(cors({
+  origin: true, // Permitir cualquier origen
+  credentials: true
+}));
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -56,8 +63,8 @@ let manualStop = false; // Flag para diferenciar stop manual vs finalización na
 let disconnectTimer = null; // Timer para grace period al desconectar
 let isStartingPlayback = false; // Lock para evitar reproducciones simultáneas
 
-// WebSocket para actualizaciones en tiempo real
-const wss = new WebSocket.Server({ port: 3001 });
+// WebSocket para actualizaciones en tiempo real (mismo servidor HTTP)
+const wss = new WebSocket.Server({ server });
 
 // Guardar estado en archivo
 function saveState() {
@@ -777,25 +784,25 @@ setInterval(() => {
   }
 }, 500);
 
-// Iniciar servidor
-app.listen(PORT, () => {
+// Iniciar servidor (HTTP + WebSocket en el mismo puerto)
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║     🎵 Discord DJ Web Controller - Servidor Iniciado 🎵    ║
 ╠════════════════════════════════════════════════════════════╣
 ║                                                            ║
-║  Servidor HTTP:     http://localhost:${PORT}                  ║
-║  WebSocket:         ws://localhost:3001                    ║
+║  Servidor HTTP+WS:  http://localhost:${PORT}                  ║
+║  WebSocket:         ws://localhost:${PORT}                    ║
 ║                                                            ║
 ║  Panel de Control:  http://localhost:${PORT}                  ║
 ║                                                            ║
 ║  Cola restaurada:   ${queue.length} canciones                       ║
 ║                                                            ║
 ╠════════════════════════════════════════════════════════════╣
-║  Nuevas funciones:                                          ║
-║  • Soporte de playlists de YouTube                        ║
-║  • Cola de reproducción persistente                       ║
-║  • Auto-reproducir siguiente canción                      ║
+║  Modo Híbrido:                                             ║
+║  • Listo para túnel (Cloudflare/ngrok)                    ║
+║  • HTTP y WebSocket en el mismo puerto                    ║
+║  • CORS habilitado para cualquier origen                  ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });
