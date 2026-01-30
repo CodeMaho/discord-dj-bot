@@ -448,11 +448,14 @@ async function restoreState() {
 // CARGA DE DISPOSITIVOS DE AUDIO
 // ============================================
 
-async function loadAudioDevices() {
+async function loadAudioDevices(refresh = false) {
     console.log('[Load-Devices] 🔊 Iniciando carga de dispositivos...');
 
     try {
-        const response = await fetch(`${getBackendUrl()}/api/audio-devices`);
+        const url = refresh
+            ? `${getBackendUrl()}/api/audio-devices?refresh=true`
+            : `${getBackendUrl()}/api/audio-devices`;
+        const response = await fetch(url);
         console.log('[Load-Devices] ✅ Response recibida, status:', response.status);
         
         const data = await response.json();
@@ -555,7 +558,7 @@ function attachEventListeners() {
     if (elements.refreshBtn) {
         elements.refreshBtn.addEventListener('click', () => {
             elements.refreshBtn.disabled = true;
-            loadAudioDevices().finally(() => {
+            loadAudioDevices(true).finally(() => {
                 elements.refreshBtn.disabled = false;
             });
         });
