@@ -1,353 +1,260 @@
-# 🚀 Guía de Instalación Rápida - Windows 11
+# Guia de Instalacion - Windows
 
-Esta guía te llevará paso a paso para tener tu Discord DJ funcionando en menos de 15 minutos.
+Esta guia detalla el proceso de instalacion en Windows 10/11.
+
+## Metodo Rapido (Recomendado)
+
+### Paso 1: Descargar el proyecto
+
+```bash
+git clone https://github.com/CodeMaho/discord-dj-bot.git
+cd discord-dj-bot
+```
+
+O descarga el ZIP desde GitHub y extrae.
+
+### Paso 2: Ejecutar instalador
+
+**Doble click en `INSTALL.bat`**
+
+El instalador:
+1. Solicita permisos de administrador
+2. Verifica/instala Node.js via winget
+3. Verifica/instala MPV via winget
+4. Verifica/instala yt-dlp via winget
+5. Verifica/instala Cloudflared via winget
+6. Detecta VB-Audio Virtual Cable (requiere instalacion manual)
+7. Ejecuta `npm install` para dependencias
+
+### Paso 3: Instalar VB-Audio Virtual Cable
+
+Este componente requiere instalacion manual:
+
+1. Ve a https://vb-audio.com/Cable/
+2. Descarga **VBCABLE_Driver_Pack45.zip** (o version mas reciente)
+3. Extrae el ZIP
+4. Click derecho en `VBCABLE_Setup_x64.exe` → **Ejecutar como administrador**
+5. Sigue el asistente
+6. **Reinicia tu PC**
+
+### Paso 4: Configurar Discord
+
+Con tu cuenta DJ (cuenta secundaria):
+
+1. Abre Discord
+2. Configuracion (⚙️) → Voz y Video
+3. **Dispositivo de Entrada**: CABLE Output (VB-Audio Virtual Cable)
+4. **Desactiva**:
+   - Cancelacion de Eco
+   - Supresion de Ruido
+   - Ganancia Automatica
+   - Detectar automaticamente sensibilidad
+5. **Sensibilidad**: Mover al minimo (izquierda)
+
+### Paso 5: Iniciar
+
+**Doble click en `START-DJ.bat`**
+
+Veras:
+```
+========================================
+    Discord DJ Bot - Iniciando...
+========================================
+
+[1/5] Verificando Node.js... OK
+[2/5] Verificando MPV... OK
+[3/5] Verificando yt-dlp... OK
+[4/5] Verificando Cloudflared... OK
+[5/5] Verificando dependencias npm... OK
+
+Todas las dependencias OK
+
+[Servidor] Iniciando Node.js...
+[Servidor] Iniciado en http://localhost:3000
+
+========================================
+  INICIANDO TUNEL DE CLOUDFLARE
+========================================
+
+Your quick Tunnel has been created! Visit it at:
+https://example-words.trycloudflare.com
+```
+
+Copia la URL del tunel para acceso remoto.
 
 ---
 
-## 📥 PASO 1: Descargar e Instalar Software Base
+## Metodo Manual
 
-### 1.1 Node.js
-1. Ve a: https://nodejs.org/
-2. Descarga la versión **LTS (recomendada)**
-3. Ejecuta el instalador
-4. ✅ Marca **todas las opciones** durante la instalación
-5. Reinicia tu PC después de instalar
+Si prefieres instalar manualmente cada componente:
 
-**Verificar instalación:**
-```cmd
+### 1. Node.js
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+O descarga desde https://nodejs.org/
+
+Verificar:
+```powershell
 node --version
 npm --version
 ```
 
----
+### 2. MPV
 
-### 1.2 MPV Player
-
-**Opción A - Instalador automático (Recomendado):**
-1. Ve a: https://mpv.io/installation/
-2. Busca **"mpv-install.bat"** o descarga desde: https://sourceforge.net/projects/mpv-player-windows/files/
-3. Descarga el archivo `.7z` más reciente
-4. Extrae el contenido a: `C:\Program Files\mpv\`
-5. Agrega al PATH:
-   - Presiona `Win + X` → "Sistema"
-   - Click en "Configuración avanzada del sistema"
-   - "Variables de entorno"
-   - En "Variables del sistema", selecciona "Path" → "Editar"
-   - "Nuevo" → Pega: `C:\Program Files\mpv\`
-   - "Aceptar" en todo
-
-**Opción B - Con Chocolatey:**
-```cmd
-# Si tienes Chocolatey instalado:
-choco install mpv
+```powershell
+winget install mpv.net
 ```
 
-**Verificar instalación:**
-```cmd
+O descarga desde https://mpv.io/installation/
+
+Verificar:
+```powershell
 mpv --version
 ```
 
----
+### 3. yt-dlp
 
-### 1.3 yt-dlp
+```powershell
+winget install yt-dlp.yt-dlp
+```
 
-1. Ve a: https://github.com/yt-dlp/yt-dlp/releases
-2. Descarga: **yt-dlp.exe** (el archivo .exe solo)
-3. Opciones para instalarlo:
+O descarga desde https://github.com/yt-dlp/yt-dlp/releases
 
-**Opción A - Moverlo a System32 (Más fácil):**
-- Mueve `yt-dlp.exe` a: `C:\Windows\System32\`
-- ⚠️ Necesitarás permisos de administrador
-
-**Opción B - Crear carpeta dedicada:**
-- Crea la carpeta: `C:\Tools\`
-- Mueve `yt-dlp.exe` ahí
-- Agrega `C:\Tools\` al PATH (mismo proceso que MPV)
-
-**Verificar instalación:**
-```cmd
+Verificar:
+```powershell
 yt-dlp --version
 ```
 
----
+### 4. Cloudflared
 
-### 1.4 VB-Audio Virtual Cable
-
-1. Ve a: https://vb-audio.com/Cable/
-2. Descarga: **VBCABLE_Driver_Pack43.zip** (o versión más reciente)
-3. Extrae el ZIP
-4. **Click derecho** en `VBCABLE_Setup_x64.exe`
-5. "Ejecutar como administrador"
-6. Sigue el asistente de instalación
-7. ⚠️ **REINICIA TU PC** (esto es importante)
-
-**Verificar instalación:**
-- Después de reiniciar, click derecho en el icono de volumen
-- "Configuración de sonido"
-- En "Dispositivos de salida" debería aparecer **"CABLE Input"**
-
----
-
-## 📁 PASO 2: Configurar el Proyecto
-
-### 2.1 Descargar el proyecto
-
-1. Crea una carpeta, por ejemplo: `C:\Discord-DJ\`
-2. Descarga todos los archivos del proyecto ahí
-3. Deberías tener esta estructura:
-   ```
-   C:\Discord-DJ\
-   ├── package.json
-   ├── server.js
-   ├── README.md
-   ├── .gitignore
-   └── public/
-       ├── index.html
-       ├── styles.css
-       └── app.js
-   ```
-
-### 2.2 Instalar dependencias
-
-1. Abre **PowerShell** o **CMD**
-2. Navega a la carpeta:
-   ```cmd
-   cd C:\Discord-DJ
-   ```
-3. Instala las dependencias:
-   ```cmd
-   npm install
-   ```
-   
-   Esto tomará 1-2 minutos.
-
----
-
-## ⚙️ PASO 3: Configurar Discord
-
-### 3.1 Preparar la Cuenta DJ
-
-1. **Opción A**: Crea una nueva cuenta de Discord
-2. **Opción B**: Usa una cuenta secundaria que ya tengas
-
-### 3.2 Configurar el Audio en Discord
-
-1. Abre Discord con tu **cuenta DJ** (la secundaria)
-2. Ve a **Configuración de Usuario** (⚙️, abajo a la izquierda)
-3. En el menú lateral, selecciona **"Voz y Video"**
-4. Realiza estos ajustes:
-
-   **Dispositivo de Entrada:**
-   - Selecciona: **"CABLE Output (VB-Audio Virtual Cable)"**
-   
-   **Modo de Entrada:**
-   - Marca: **"Actividad de voz"**
-   
-   **Configuración Avanzada:**
-   - ❌ Desactiva: "Cancelación de Eco"
-   - ❌ Desactiva: "Supresión de Ruido"
-   - ❌ Desactiva: "Ganancia Automática"
-   
-   **Sensibilidad de Entrada:**
-   - ❌ Desactiva: "Detectar automáticamente la sensibilidad de entrada"
-   - Mueve el control deslizante **completamente a la izquierda** (al mínimo)
-
-5. Haz clic en **"Guardar Cambios"**
-
-### 3.3 Verificar Configuración de Windows
-
-1. Click derecho en el **icono de volumen** (bandeja del sistema)
-2. "Configuración de sonido"
-3. Scroll hasta abajo → "Configuración avanzada de sonido"
-4. Verifica que **CABLE Input** esté visible y **no esté silenciado**
-
----
-
-## 🎮 PASO 4: Iniciar el Sistema
-
-### 4.1 Arrancar el Servidor
-
-1. Abre **PowerShell** o **CMD** en la carpeta del proyecto:
-   ```cmd
-   cd C:\Discord-DJ
-   ```
-
-2. Inicia el servidor:
-   ```cmd
-   npm start
-   ```
-
-3. Deberías ver:
-   ```
-   ╔════════════════════════════════════════════════════════════╗
-   ║     🎵 Discord DJ Web Controller - Servidor Iniciado 🎵    ║
-   ╠════════════════════════════════════════════════════════════╣
-   ║  Servidor HTTP:     http://localhost:3000                  ║
-   ║  Panel de Control:  http://localhost:3000                  ║
-   ╚════════════════════════════════════════════════════════════╝
-   ```
-
-### 4.2 Abrir el Panel Web
-
-1. Abre tu navegador (Chrome, Firefox, Edge)
-2. Ve a: `http://localhost:3000`
-3. Deberías ver el panel de control con diseño oscuro
-
----
-
-## 🎵 PASO 5: Primera Prueba
-
-### 5.1 Unirse a una Llamada
-
-**Con tu cuenta principal:**
-1. Inicia una llamada privada con alguien
-2. O únete a un canal de voz en un servidor
-
-**Con tu cuenta DJ:**
-1. Únete a la misma llamada/canal
-2. Deja esta ventana abierta (puede estar minimizada)
-
-### 5.2 Reproducir Música
-
-1. En el **panel web** (`http://localhost:3000`):
-
-2. **Selecciona el dispositivo de audio:**
-   - En el selector, elige: **"CABLE Input (VB-Audio Virtual Cable)"**
-   - Aparecerá con una estrella ⭐
-
-3. **Copia una URL de YouTube**, por ejemplo:
-   ```
-   https://www.youtube.com/watch?v=dQw4w9WgXcQ
-   ```
-
-4. **Pega la URL** en el campo de texto
-
-5. **Click en "Reproducir"** ▶️
-
-6. ✅ **La música debería empezar a sonar en Discord**
-
-### 5.3 Verificar que Funciona
-
-- En el panel web verás el título de la canción
-- El estado cambiará a "Reproduciendo"
-- Todos en la llamada deberían escuchar la música
-
----
-
-## 🔧 Si Algo No Funciona
-
-### ❌ No se escucha audio en Discord
-
-**Checklist:**
-- [ ] ¿Reiniciaste el PC después de instalar Virtual Cable?
-- [ ] ¿El micrófono de Discord está en "CABLE Output"?
-- [ ] ¿La sensibilidad está al mínimo en Discord?
-- [ ] ¿La cuenta DJ está realmente en la llamada?
-- [ ] ¿Seleccionaste "CABLE Input" en el panel web?
-
-**Prueba esto:**
-1. Cierra completamente Discord
-2. Reinicia Discord
-3. Vuelve a configurar el micrófono
-4. Reintenta la reproducción
-
----
-
-### ❌ Error: "MPV not found"
-
-1. Abre CMD y escribe:
-   ```cmd
-   mpv --version
-   ```
-   
-   Si no funciona:
-   - Reinstala MPV
-   - Asegúrate de agregarlo al PATH
-   - **Reinicia la terminal** (cierra y abre CMD de nuevo)
-   - Si sigue sin funcionar, reinicia el PC
-
----
-
-### ❌ Error: "yt-dlp not found"
-
-1. Verifica:
-   ```cmd
-   yt-dlp --version
-   ```
-   
-   Si no funciona:
-   - Mueve `yt-dlp.exe` a `C:\Windows\System32\`
-   - O agrega su ubicación al PATH
-   - Reinicia la terminal
-
----
-
-### ❌ El servidor no inicia
-
-1. Verifica que Node.js esté instalado:
-   ```cmd
-   node --version
-   ```
-
-2. Vuelve a instalar dependencias:
-   ```cmd
-   cd C:\Discord-DJ
-   rm -r node_modules
-   npm install
-   ```
-
-3. Verifica que los puertos 3000 y 3001 no estén ocupados:
-   ```cmd
-   netstat -ano | findstr :3000
-   netstat -ano | findstr :3001
-   ```
-   
-   Si están ocupados, cierra el programa que los usa.
-
----
-
-## 📱 Bonus: Acceder desde tu Móvil
-
-### Encontrar tu IP local:
-
-```cmd
-ipconfig
+```powershell
+winget install Cloudflare.cloudflared
 ```
 
-Busca **"Dirección IPv4"**, algo como: `192.168.1.100`
+Verificar:
+```powershell
+cloudflared --version
+```
 
-### En tu teléfono:
+### 5. Dependencias npm
 
-1. Conéctate a la **misma red WiFi** que tu PC
-2. Abre el navegador
-3. Ve a: `http://192.168.1.100:3000` (usa tu IP)
-4. ¡Ahora puedes controlar la música desde tu móvil!
+```powershell
+cd discord-dj-bot
+npm install
+```
 
----
+### 6. VB-Audio Virtual Cable
 
-## 🎉 ¡Listo!
-
-Ya tienes tu **Discord DJ Web Controller** funcionando.
-
-**Resumen de lo que tienes:**
-- ✅ Panel web para controlar música
-- ✅ Compatible con YouTube y playlists
-- ✅ Acceso desde cualquier dispositivo en tu red
-- ✅ Sin riesgo de baneo (no usas bots)
-- ✅ Calidad de audio excelente
+Descarga e instala desde https://vb-audio.com/Cable/
 
 ---
 
-## 📚 Siguiente Paso
+## Verificar Instalacion
 
-Lee el **README.md** completo para:
-- Entender cómo funciona el sistema
-- Ver todas las funciones disponibles
-- Solucionar problemas avanzados
-- Personalizar la configuración
+Ejecuta estos comandos para verificar todo:
+
+```powershell
+# Node.js
+node --version
+
+# MPV
+mpv --version
+
+# yt-dlp
+yt-dlp --version
+
+# Cloudflared
+cloudflared --version
+
+# Dispositivos de audio
+mpv --audio-device=help | findstr CABLE
+```
+
+Si todos funcionan, ejecuta `START-DJ.bat`.
 
 ---
 
-**¿Necesitas ayuda?** Revisa la documentación completa en `README.md`
+## Estructura de Archivos
 
-**¡Disfruta tu Radio Station en Discord! 🎵🎧**
+Despues de la instalacion:
+
+```
+discord-dj-bot/
+├── INSTALL.bat          # Instalador automatico
+├── INSTALL.ps1          # Script de instalacion (PowerShell)
+├── START-DJ.bat         # Iniciar el bot
+├── start-dj.ps1         # Script de inicio (PowerShell)
+├── server.js            # Servidor backend
+├── package.json         # Dependencias Node.js
+├── node_modules/        # Dependencias instaladas
+├── public/              # Frontend web
+│   ├── index.html       # Pagina principal
+│   ├── app_new.js       # Logica del frontend
+│   └── styles.css       # Estilos
+├── README.md            # Documentacion principal
+├── INSTALL_WINDOWS.md   # Esta guia
+└── TROUBLESHOOTING.md   # Solucion de problemas
+```
+
+---
+
+## Configuracion Avanzada
+
+### Cambiar puerto del servidor
+
+Edita `server.js`:
+```javascript
+const PORT = process.env.PORT || 3000;  // Cambia 3000 por otro puerto
+```
+
+### Usar sin Cloudflare Tunnel
+
+Si solo quieres uso local, puedes iniciar manualmente:
+
+```powershell
+cd discord-dj-bot
+node server.js
+```
+
+Accede a http://localhost:3000
+
+### Acceso desde red local (sin tunel)
+
+1. Encuentra tu IP local:
+   ```powershell
+   ipconfig
+   ```
+   Busca "Direccion IPv4" (ej: 192.168.1.100)
+
+2. Permite Node.js en el firewall de Windows
+
+3. Accede desde otro dispositivo:
+   ```
+   http://192.168.1.100:3000
+   ```
+
+---
+
+## Desinstalacion
+
+Para desinstalar los componentes:
+
+```powershell
+winget uninstall OpenJS.NodeJS.LTS
+winget uninstall mpv.net
+winget uninstall yt-dlp.yt-dlp
+winget uninstall Cloudflare.cloudflared
+```
+
+VB-Audio Virtual Cable: Panel de Control → Programas → Desinstalar
+
+---
+
+## Siguiente Paso
+
+Una vez instalado, lee [README.md](README.md) para aprender a usar el sistema.
+
+Si tienes problemas, consulta [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

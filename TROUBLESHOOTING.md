@@ -1,510 +1,300 @@
-# 🔧 Guía de Solución de Problemas Detallada
+# Solucion de Problemas
 
-Esta guía cubre los problemas más comunes y sus soluciones.
+Guia para resolver problemas comunes.
 
----
+## Problemas de Instalacion
 
-## 📑 Índice de Problemas
+### "INSTALL.bat no hace nada" o "Se cierra inmediatamente"
 
-1. [Problemas de Instalación](#problemas-de-instalación)
-2. [Problemas de Audio](#problemas-de-audio)
-3. [Problemas de Conexión](#problemas-de-conexión)
-4. [Problemas de Reproducción](#problemas-de-reproducción)
-5. [Problemas de Discord](#problemas-de-discord)
-6. [Problemas de Rendimiento](#problemas-de-rendimiento)
+**Causa**: Falta winget o permisos de administrador.
 
----
+**Solucion**:
+1. Click derecho en INSTALL.bat → Ejecutar como administrador
+2. Si winget no esta disponible, instalalo desde Microsoft Store (busca "App Installer")
+3. Reinicia Windows e intenta de nuevo
 
-## 🔨 Problemas de Instalación
+### "Node.js/MPV/yt-dlp no encontrado" despues de instalar
 
-### ❌ "node is not recognized as an internal or external command"
+**Causa**: La terminal no tiene el PATH actualizado.
 
-**Causa**: Node.js no está instalado o no está en el PATH del sistema.
+**Solucion**:
+1. Cierra todas las terminales
+2. Abre una nueva terminal
+3. Verifica de nuevo: `node --version`
 
-**Solución**:
-1. Reinstala Node.js desde https://nodejs.org/
-2. Durante la instalación, asegúrate de marcar "Add to PATH"
-3. Reinicia tu PC
-4. Abre una nueva ventana de CMD/PowerShell
-5. Verifica: `node --version`
+Si sigue sin funcionar, reinicia Windows.
 
----
+### Error durante npm install
 
-### ❌ "mpv is not recognized as an internal or external command"
-
-**Causa**: MPV no está en el PATH del sistema.
-
-**Solución Rápida**:
-1. Descarga mpv.exe
-2. Copia el archivo a: `C:\Windows\System32\`
-3. Abre una nueva terminal
-4. Verifica: `mpv --version`
-
-**Solución Correcta (Recomendada)**:
-1. Crea la carpeta: `C:\Program Files\mpv\`
-2. Extrae todos los archivos de MPV ahí
-3. Agrega al PATH:
-   - `Win + X` → "Sistema"
-   - "Configuración avanzada del sistema"
-   - "Variables de entorno"
-   - En "Variables del sistema", selecciona "Path"
-   - "Editar" → "Nuevo"
-   - Agrega: `C:\Program Files\mpv\`
-   - "Aceptar" en todo
-4. Reinicia la terminal
-5. Verifica: `mpv --version`
-
----
-
-### ❌ "yt-dlp is not recognized as an internal or external command"
-
-**Causa**: yt-dlp no está en el PATH.
-
-**Solución Más Fácil**:
-1. Descarga `yt-dlp.exe` desde: https://github.com/yt-dlp/yt-dlp/releases
-2. Muévelo a: `C:\Windows\System32\`
-3. Verifica: `yt-dlp --version`
-
-**Solución Alternativa**:
-1. Crea la carpeta: `C:\Tools\`
-2. Coloca `yt-dlp.exe` ahí
-3. Agrega `C:\Tools\` al PATH (mismo proceso que MPV)
-4. Reinicia la terminal
-
----
-
-### ❌ "npm install" falla con errores
-
-**Posibles causas y soluciones**:
-
-**Error de permisos:**
-```cmd
-# Ejecuta CMD como Administrador
-npm install
-```
-
-**Caché corrupto:**
-```cmd
+**Solucion**:
+```powershell
+# Limpiar cache
 npm cache clean --force
-npm install
-```
 
-**Conexión a internet:**
-- Verifica tu conexión
-- Desactiva temporalmente VPN/Proxy
-- Intenta con otro DNS (ej: 8.8.8.8)
-
-**Node_modules corrupto:**
-```cmd
+# Eliminar node_modules
 rmdir /s /q node_modules
+
+# Reinstalar
 npm install
 ```
 
 ---
 
-## 🔊 Problemas de Audio
+## Problemas de Audio
 
-### ❌ No se escucha audio en Discord
+### No se escucha musica en Discord
 
-**Checklist completo**:
+**Checklist**:
 
-1. **Verificar Virtual Cable**:
-   - Click derecho en el icono de volumen
-   - "Configuración de sonido"
-   - Verifica que "CABLE Input" aparezca en dispositivos de salida
-   - Si no aparece, reinstala VB-Audio Virtual Cable
+1. **VB-Cable instalado?**
+   - Panel de Control → Sonido → Reproduccion
+   - Debe aparecer "CABLE Input"
+   - Si no aparece, reinstala VB-Cable y reinicia PC
 
-2. **Configuración de Discord (Cuenta DJ)**:
-   - Abre Discord con la cuenta DJ
-   - Configuración → Voz y Video
-   - **Dispositivo de Entrada**: "CABLE Output (VB-Audio Virtual Cable)"
-   - **Modo de Entrada**: "Actividad de voz"
-   - **Desactiva**:
-     - Cancelación de Eco
-     - Supresión de Ruido
-     - Ganancia Automática
-   - **Sensibilidad**: Al mínimo (completamente a la izquierda)
+2. **Discord configurado?**
+   - Cuenta DJ → Configuracion → Voz y Video
+   - Dispositivo de Entrada: CABLE Output
+   - Sensibilidad al minimo
+   - Cancelacion de eco: DESACTIVADA
+   - Supresion de ruido: DESACTIVADA
 
-3. **En el Panel Web**:
-   - Asegúrate de seleccionar "CABLE Input" (con ⭐)
-   - Si no aparece en la lista, haz clic en "Recargar Dispositivos"
+3. **Dispositivo correcto en el panel web?**
+   - Selecciona "CABLE Input" (con estrella)
+   - Si no aparece, click en "Recargar Dispositivos"
 
-4. **Verificar volumen de Windows**:
-   - Click derecho en volumen → "Mezclador de volumen"
-   - Verifica que CABLE Input no esté silenciado
-   - Sube el volumen de CABLE Input al 100%
+4. **Cuenta DJ en la llamada?**
+   - La cuenta DJ debe estar conectada a la llamada
+   - No silenciada
 
-5. **Prueba de audio directa**:
-   ```cmd
-   # Reproduce un test con MPV directamente
-   mpv --audio-device=help
-   # Busca el ID de CABLE Input
-   
-   mpv --audio-device=wasapi/... test.mp3
-   ```
+### El audio se reproduce pero en el dispositivo equivocado
 
----
+**Causa**: No seleccionaste CABLE Input en el panel web.
 
-### ❌ El audio se escucha distorsionado o con eco
+**Solucion**:
+1. En el panel web, busca el selector "Dispositivo de Audio"
+2. Selecciona "CABLE Input (VB-Audio Virtual Cable)"
+3. Vuelve a reproducir
 
-**Causa**: Cancelación de eco o supresión de ruido activos.
+### Audio distorsionado o con eco
 
-**Solución**:
-1. En Discord (cuenta DJ) → Configuración → Voz y Video
-2. Desactiva **TODO** en "Configuración Avanzada":
-   - ❌ Cancelación de Eco
-   - ❌ Supresión de Ruido
-   - ❌ Ganancia Automática
-3. Reinicia Discord completamente
-4. Vuelve a unirte a la llamada
+**Solucion**:
+En Discord (cuenta DJ) → Voz y Video:
+- Desactiva "Cancelacion de Eco"
+- Desactiva "Supresion de Ruido"
+- Desactiva "Ganancia Automatica"
 
----
-
-### ❌ Audio con cortes o interrupciones
-
-**Causas posibles**:
-
-**1. CPU/RAM sobrecargados:**
-- Cierra programas innecesarios
-- Baja la calidad de voz en Discord (96 kbps)
-- Reduce la calidad del stream de YouTube
-
-**2. Conexión a internet:**
-- Verifica tu velocidad: https://fast.com
-- Cierra otros programas que usen internet
-- Si usas WiFi, acércate al router o usa cable Ethernet
-
-**3. Buffer de MPV muy pequeño:**
-En `server.js`, modifica los argumentos de MPV:
-```javascript
-const mpvArgs = [
-    '--no-video',
-    '--audio-device=' + audioDevice,
-    '--volume=100',
-    '--ytdl-format=bestaudio',
-    '--cache=yes',                    // Agregar
-    '--demuxer-max-bytes=150M',       // Agregar
-    '--demuxer-max-back-bytes=75M',   // Agregar
-    url
-];
-```
-
----
-
-### ❌ No se detecta "CABLE Input" en el panel web
-
-**Solución**:
-
-1. Verifica que VB-Audio Virtual Cable esté instalado
-2. Reinicia tu PC si acabas de instalarlo
-3. En el panel web, haz clic en "Recargar Dispositivos"
-4. Si sigue sin aparecer, ejecuta en CMD:
-   ```cmd
-   mpv --audio-device=help
-   ```
-   Busca líneas que contengan "CABLE"
-
----
-
-## 🌐 Problemas de Conexión
-
-### ❌ "Cannot connect to WebSocket"
-
-**Causa**: El servidor no está corriendo o hay un problema de firewall.
-
-**Solución**:
-
-1. **Verifica que el servidor esté corriendo**:
-   ```cmd
-   npm start
-   ```
-   Deberías ver el mensaje de inicio
-
-2. **Verifica los puertos**:
-   ```cmd
-   netstat -ano | findstr :3000
-   netstat -ano | findstr :3001
-   ```
-   Si están ocupados:
-   - Cierra el programa que los está usando
-   - O cambia los puertos en `server.js` y `app.js`
-
-3. **Firewall de Windows**:
-   - Panel de Control → Windows Defender Firewall
-   - "Permitir una aplicación a través del firewall"
-   - Busca "Node.js" y márcalo para redes privadas y públicas
-
-4. **Antivirus**:
-   - Temporalmente desactiva el antivirus
-   - Si funciona, agrega una excepción para Node.js
-
----
-
-### ❌ No puedo acceder desde otro dispositivo en la red
-
-**Solución**:
-
-1. **Encuentra tu IP local**:
-   ```cmd
-   ipconfig
-   ```
-   Busca "Dirección IPv4" (ej: 192.168.1.100)
-
-2. **Configura el servidor**:
-   En `server.js`, cambia:
-   ```javascript
-   app.listen(PORT, '0.0.0.0', () => {
-   ```
-   
-   En lugar de solo:
-   ```javascript
-   app.listen(PORT, () => {
-   ```
-
-3. **Firewall**:
-   - Permite las conexiones entrantes en el puerto 3000
-   - Windows Defender Firewall → Configuración avanzada
-   - Regla de entrada → Puerto → TCP 3000
-
-4. **Accede desde el otro dispositivo**:
-   ```
-   http://192.168.1.100:3000
-   ```
-   (Usa tu IP)
-
----
-
-## 🎵 Problemas de Reproducción
-
-### ❌ "Error al reproducir" / "Failed to play"
+### Audio con cortes
 
 **Posibles causas**:
+- Conexion a internet lenta
+- CPU sobrecargada
+- Muchos programas abiertos
 
-**1. URL inválida**:
-- Verifica que la URL sea de YouTube
-- Formato válido: `https://www.youtube.com/watch?v=...`
-- O: `https://youtu.be/...`
+**Solucion**:
+- Cierra programas innecesarios
+- Usa cable Ethernet en vez de WiFi
+- Reduce calidad en Discord (96 kbps)
 
-**2. Video no disponible**:
-- El video puede estar bloqueado por región
-- El video puede ser privado o eliminado
-- Intenta con otro video
+---
 
-**3. yt-dlp desactualizado**:
-```cmd
-# En Windows, descarga la última versión:
-# https://github.com/yt-dlp/yt-dlp/releases
-# Reemplaza el archivo yt-dlp.exe
+## Problemas de Conexion
+
+### "No se puede conectar al servidor"
+
+**Solucion**:
+1. Verifica que START-DJ.bat este corriendo
+2. Verifica que el servidor inicio correctamente (debe decir "Servidor iniciado")
+3. Intenta http://localhost:3000 en el navegador
+
+### WebSocket se desconecta constantemente
+
+**Causa**: El servidor no esta corriendo o hay problemas de red.
+
+**Solucion**:
+1. Reinicia START-DJ.bat
+2. Si usas un tunel, verifica que siga activo
+3. Recarga la pagina web (Ctrl+F5)
+
+### No puedo acceder desde otro dispositivo
+
+**Solucion para acceso local (misma red)**:
+1. Encuentra tu IP: `ipconfig` → Direccion IPv4
+2. Permite Node.js en Windows Firewall
+3. Accede a `http://TU_IP:3000`
+
+**Solucion para acceso remoto (internet)**:
+1. Usa el tunel de Cloudflare (START-DJ.bat lo crea automaticamente)
+2. Copia la URL que aparece (https://xxx.trycloudflare.com)
+3. Usa esa URL desde cualquier lugar
+
+### La URL del tunel cambia cada vez
+
+**Esto es normal**. Cloudflare Quick Tunnels generan URLs temporales.
+
+**Para URL permanente**:
+1. Crea cuenta en Cloudflare (gratis)
+2. Configura un tunel permanente con tu dominio
+3. Documentacion: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/
+
+---
+
+## Problemas de Reproduccion
+
+### "Error al reproducir" o video no carga
+
+**Posibles causas**:
+1. URL invalida
+2. Video privado o eliminado
+3. yt-dlp desactualizado
+
+**Solucion**:
+```powershell
+# Actualizar yt-dlp
+yt-dlp -U
+
+# Probar URL manualmente
+yt-dlp -F "URL_DEL_VIDEO"
 ```
 
-**4. Problemas de red**:
-- Verifica tu conexión a internet
-- Intenta: `yt-dlp -F "URL"` en CMD para probar
+### Playlists no funcionan
 
----
+**Solucion**: Las playlists funcionan automaticamente. Verifica:
+1. La URL es de una playlist de YouTube
+2. La playlist no es privada
+3. yt-dlp esta actualizado
 
-### ❌ Playlists no funcionan
+### "spawn mpv ENOENT"
 
-**Causa**: MPV solo reproduce el primer video por defecto.
+**Causa**: MPV no esta en el PATH.
 
-**Solución**:
-En `server.js`, modifica los argumentos de MPV:
-```javascript
-const mpvArgs = [
-    '--no-video',
-    '--audio-device=' + audioDevice,
-    '--volume=100',
-    '--ytdl-format=bestaudio',
-    '--playlist=yes',  // Agregar esta línea
-    url
-];
-```
+**Solucion**:
+```powershell
+# Verificar MPV
+mpv --version
 
----
+# Si falla, reinstalar
+winget install mpv.net
 
-### ❌ "spawn mpv ENOENT"
-
-**Causa**: Node.js no puede encontrar el ejecutable de MPV.
-
-**Solución**:
-
-**Windows**:
-1. Asegúrate de que MPV esté en el PATH
-2. Verifica: `where mpv` en CMD
-3. Si no aparece nada, vuelve a agregarlo al PATH
-4. Reinicia la terminal/PC
-
-**Alternativa - Ruta absoluta**:
-En `server.js`, cambia:
-```javascript
-currentProcess = spawn('mpv', mpvArgs);
-```
-
-Por:
-```javascript
-currentProcess = spawn('C:\\Program Files\\mpv\\mpv.exe', mpvArgs);
-```
-
----
-
-## 💬 Problemas de Discord
-
-### ❌ "Mi cuenta DJ sigue sin transmitir audio"
-
-**Verificación exhaustiva**:
-
-1. **Prueba con otro usuario**:
-   - Pídele a alguien que te diga si escuchan algo
-   - A veces el problema es solo con tu audio
-
-2. **Verifica que realmente estás transmitiendo**:
-   - En la llamada de Discord, deberías ver el ícono de micrófono
-   - El anillo alrededor del avatar de tu DJ debería iluminarse
-
-3. **Prueba el micrófono virtual**:
-   - Abre la grabadora de voz de Windows
-   - Selecciona "CABLE Output" como micrófono
-   - Reproduce música con MPV → CABLE Input
-   - Graba
-   - Reproduce la grabación
-   - Si no se grabó nada, el problema es Virtual Cable
-
-4. **Reinstala Virtual Cable**:
-   - Desinstala VB-Audio Virtual Cable
-   - Reinicia PC
-   - Reinstala
-   - Reinicia PC de nuevo
-
----
-
-### ❌ "Me escucho a mí mismo (eco)"
-
-**Causa**: Estás monitoreando tu propio audio.
-
-**Solución**:
-- En Discord, asegúrate de estar silenciado en tu cuenta principal
-- O desactiva el monitor de audio de CABLE Output en Windows:
-  1. Panel de Control → Sonido
-  2. Pestaña "Grabación"
-  3. CABLE Output → Propiedades
-  4. Pestaña "Escuchar"
-  5. Desmarca "Escuchar este dispositivo"
-
----
-
-### ❌ "Mi cuenta DJ aparece como silenciada en Discord"
-
-**Solución**:
-- Asegúrate de que el micrófono no esté silenciado en Discord
-- Verifica que la sensibilidad esté al mínimo
-- Desactiva "Detectar automáticamente sensibilidad"
-
----
-
-## ⚡ Problemas de Rendimiento
-
-### ❌ Alto uso de CPU
-
-**Causas y soluciones**:
-
-**1. Múltiples instancias de MPV**:
-```cmd
-# Cierra todos los procesos de MPV:
-taskkill /F /IM mpv.exe
-```
-
-**2. Calidad de video muy alta**:
-En `server.js`, reduce la calidad:
-```javascript
-const mpvArgs = [
-    '--no-video',
-    '--audio-device=' + audioDevice,
-    '--volume=100',
-    '--ytdl-format=bestaudio[abr<=128]',  // Limita a 128kbps
-    url
-];
-```
-
-**3. Demasiadas pestañas del navegador**:
-- Cierra pestañas innecesarias
-- Usa solo un cliente conectado al panel
-
----
-
-### ❌ Lag en el panel web
-
-**Solución**:
-- Limpia el caché del navegador
-- Usa Chrome o Edge (mejor rendimiento)
-- Cierra otros sitios web pesados
-
----
-
-## 🆘 Último Recurso: Reset Completo
-
-Si nada funciona, prueba esto:
-
-```cmd
-# 1. Detén el servidor (Ctrl + C)
-
-# 2. Elimina node_modules
-rmdir /s /q node_modules
-
-# 3. Limpia caché de npm
-npm cache clean --force
-
-# 4. Reinstala dependencias
-npm install
-
-# 5. Verifica requisitos
-check-requirements.bat
-
-# 6. Reinicia tu PC
-
-# 7. Inicia el servidor de nuevo
-npm start
+# Reiniciar terminal
 ```
 
 ---
 
-## 📞 Registro de Diagnóstico
+## Problemas con el Panel Web
 
-Para reportar un problema, incluye esta información:
+### El panel no carga o esta en blanco
 
-```cmd
+**Solucion**:
+1. Verifica que el servidor este corriendo
+2. Limpia cache del navegador (Ctrl+Shift+Delete)
+3. Intenta en modo incognito
+4. Prueba otro navegador
+
+### Los botones no responden
+
+**Causa**: WebSocket no conectado.
+
+**Solucion**:
+1. Mira el indicador de conexion (arriba a la derecha)
+2. Si dice "Desconectado", recarga la pagina
+3. Verifica que el servidor siga corriendo
+
+### La configuracion del backend no se guarda
+
+**Solucion**:
+1. Verifica que no tengas bloqueado localStorage en el navegador
+2. La URL debe ser completa (https://xxx.trycloudflare.com)
+3. Click en "Guardar" despues de pegar la URL
+
+---
+
+## Problemas con Discord
+
+### La cuenta DJ aparece silenciada
+
+**Solucion**:
+1. En Discord, click en el icono de microfono para activarlo
+2. Verifica que CABLE Output este seleccionado como entrada
+3. Baja la sensibilidad al minimo
+
+### Echo o me escucho a mi mismo
+
+**Causa**: Estas monitoreando el audio.
+
+**Solucion**:
+1. Panel de Control → Sonido → Grabacion
+2. CABLE Output → Propiedades → Escuchar
+3. Desmarca "Escuchar este dispositivo"
+
+### La cuenta DJ no se conecta a la llamada
+
+**Solucion**: Esto es manual. Debes:
+1. Abrir Discord con la cuenta DJ
+2. Unirte a la llamada/canal de voz
+3. Dejar Discord abierto (puede estar minimizado)
+
+---
+
+## Comandos de Diagnostico
+
+Ejecuta estos comandos para verificar el estado:
+
+```powershell
 # Versiones instaladas
 node --version
 npm --version
 mpv --version
 yt-dlp --version
+cloudflared --version
 
-# Estado de los puertos
-netstat -ano | findstr :3000
-netstat -ano | findstr :3001
-
-# Dispositivos de audio de MPV
+# Dispositivos de audio
 mpv --audio-device=help
 
-# Logs del servidor
-# (Copia el output de la terminal cuando inicias npm start)
+# Puertos en uso
+netstat -ano | findstr :3000
+
+# Probar reproduccion manual
+mpv --no-video "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
 
 ---
 
-## ✅ Checklist de Diagnóstico Rápido
+## Reset Completo
 
-Antes de buscar ayuda, verifica:
+Si nada funciona, intenta un reset completo:
 
-- [ ] ¿Node.js instalado? (`node --version`)
-- [ ] ¿MPV instalado? (`mpv --version`)
-- [ ] ¿yt-dlp instalado? (`yt-dlp --version`)
-- [ ] ¿Virtual Cable instalado? (Verifica en "Configuración de sonido")
-- [ ] ¿Servidor corriendo? (`npm start` sin errores)
-- [ ] ¿Discord configurado? (Micrófono en CABLE Output)
-- [ ] ¿Dispositivo seleccionado? (CABLE Input en el panel)
-- [ ] ¿Cuenta DJ en la llamada? (Realmente conectado)
-- [ ] ¿Firewall permitiendo Node.js? (Especialmente para acceso remoto)
+```powershell
+# 1. Cerrar todo
+# Cierra START-DJ.bat y cualquier terminal
+
+# 2. Eliminar node_modules
+cd discord-dj-bot
+rmdir /s /q node_modules
+
+# 3. Limpiar npm
+npm cache clean --force
+
+# 4. Reinstalar
+npm install
+
+# 5. Reiniciar PC
+
+# 6. Ejecutar INSTALL.bat de nuevo
+
+# 7. Ejecutar START-DJ.bat
+```
 
 ---
 
-**Si sigues teniendo problemas**, revisa los logs de la consola donde está corriendo el servidor (`npm start`). Los errores ahí suelen indicar exactamente qué está fallando.
+## Obtener Ayuda
+
+Si sigues teniendo problemas:
+
+1. Revisa los logs en la terminal donde corre START-DJ.bat
+2. Copia el error completo
+3. Verifica que seguiste todos los pasos de instalacion
+4. Abre un issue en GitHub con:
+   - Sistema operativo
+   - Mensaje de error completo
+   - Pasos que seguiste
+   - Output de los comandos de diagnostico
