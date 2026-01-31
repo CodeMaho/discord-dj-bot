@@ -5,6 +5,7 @@ const http = require('http');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const readline = require('readline');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 
 const app = express();
@@ -838,11 +839,6 @@ if (serverConfig.audioDevice) {
   saveServerConfig();
 }
 
-// Cargar dispositivos de audio al iniciar (para caché)
-loadAudioDevices().then(() => {
-  console.log('[Startup] Dispositivos de audio cargados en caché');
-});
-
 // ===== CLOUDFLARED TUNNEL =====
 let cloudflaredProcess = null;
 
@@ -980,32 +976,91 @@ setInterval(() => {
   }
 }, 500);
 
+// ===== CONFIGURACIÓN INTERACTIVA AL INICIO =====
+async function selectAudioDeviceInteractive() {
+  // Cargar dispositivos
+  await loadAudioDevices();
+
+  if (cachedAudioDevices.length === 0) {
+    console.log('[Audio] No se encontraron dispositivos. Usando configuración guardada.');
+    return savedAudioDevice;
+  }
+
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║  🔊 SELECCIONA EL DISPOSITIVO DE AUDIO                     ║');
+  console.log('╠════════════════════════════════════════════════════════════╣');
+
+  // Mostrar dispositivos con números
+  cachedAudioDevices.forEach((device, index) => {
+    const isCable = device.name.toLowerCase().includes('cable');
+    const isSelected = device.id === savedAudioDevice;
+    const marker = isSelected ? ' ✓' : (isCable ? ' ⭐' : '');
+    console.log(`║  [${(index + 1).toString().padStart(2)}] ${device.name.substring(0, 45).padEnd(45)}${marker} ║`);
+  });
+
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log('║  [0] Usar dispositivo guardado anteriormente               ║');
+  console.log('╚════════════════════════════════════════════════════════════╝');
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question('\nSelecciona un número: ', (answer) => {
+      rl.close();
+
+      const num = parseInt(answer);
+
+      if (num === 0 || isNaN(num)) {
+        console.log(`[Audio] Usando dispositivo guardado: ${savedAudioDevice || '(ninguno)'}`);
+        resolve(savedAudioDevice);
+      } else if (num >= 1 && num <= cachedAudioDevices.length) {
+        const selected = cachedAudioDevices[num - 1];
+        savedAudioDevice = selected.id;
+        serverConfig.audioDevice = selected.id;
+        saveServerConfig();
+        saveState();
+        console.log(`[Audio] ✅ Seleccionado: ${selected.name}`);
+        resolve(selected.id);
+      } else {
+        console.log('[Audio] Número inválido, usando dispositivo guardado.');
+        resolve(savedAudioDevice);
+      }
+    });
+  });
+}
+
 // Iniciar servidor (HTTP + WebSocket en el mismo puerto)
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║     🎵 Discord DJ Web Controller - Servidor Iniciado 🎵    ║
 ╠════════════════════════════════════════════════════════════╣
-║                                                            ║
 ║  Servidor HTTP+WS:  http://localhost:${PORT}                  ║
-║  Cola restaurada:   ${queue.length} canciones                       ║
-║                                                            ║
+║  Cola restaurada:   ${String(queue.length).padEnd(2)} canciones                      ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 
-  // Iniciar cloudflared automáticamente
-  console.log('[Startup] Iniciando túnel de Cloudflare...');
+  // 1. Seleccionar dispositivo de audio
+  await selectAudioDeviceInteractive();
+
+  // 2. Iniciar cloudflared
+  console.log('\n[Startup] Iniciando túnel de Cloudflare...');
   const url = await startCloudflared();
 
   if (url) {
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║  ✅ TÚNEL ACTIVO                                           ║
+║  ✅ TODO LISTO                                             ║
 ╠════════════════════════════════════════════════════════════╣
 ║                                                            ║
 ║  URL Pública: ${url.padEnd(43)}║
+║  Audio:       ${(savedAudioDevice || 'Por defecto').substring(0, 43).padEnd(43)}║
 ║                                                            ║
-║  Comparte esta URL o accede desde dj.mingod.es            ║
+║  Comparte la URL o accede desde tu web                    ║
+║  Presiona Ctrl+C para detener                             ║
 ╚════════════════════════════════════════════════════════════╝
     `);
   } else {
