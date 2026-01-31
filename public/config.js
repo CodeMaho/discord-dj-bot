@@ -1,10 +1,12 @@
 // ============================================
 // CONFIGURACIÓN DEL DISCORD DJ CONTROLLER
 // ============================================
-// Este archivo ya no se usa - la configuración se almacena en el servidor.
-// Se mantiene por compatibilidad pero puede ser eliminado.
+// Este archivo se sube a IONOS y define la URL del backend.
+// IMPORTANTE: Actualiza BACKEND_URL con tu túnel de Cloudflare.
 
 const DJ_CONFIG = {
-    // Configuración movida al servidor (server-config.json)
-    // Ver endpoints: GET/POST /api/config
+    // URL del backend (tu PC con el túnel de Cloudflare)
+    // Ejemplo: 'https://abc123.trycloudflare.com'
+    // Dejar vacío '' solo para modo local (frontend y backend en el mismo servidor)
+    BACKEND_URL: ''
 };
