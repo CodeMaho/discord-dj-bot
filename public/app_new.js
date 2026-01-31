@@ -162,9 +162,8 @@ let ws = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
-const BASE_RECONNECT_DELAY = 1000; // 1 segundo
+const BASE_RECONNECT_DELAY = 1000;
 let progressInterval = null;
-let savedAudioDevice = ''; // Dispositivo guardado del servidor
 let currentStatus = {
     url: '',
     title: 'Ninguna',
@@ -176,12 +175,10 @@ let currentStatus = {
 // Elementos del DOM
 const elements = {
     urlInput: document.getElementById('urlInput'),
-    audioDevice: document.getElementById('audioDevice'),
     playBtn: document.getElementById('playBtn'),
     addQueueBtn: document.getElementById('addQueueBtn'),
     stopBtn: document.getElementById('stopBtn'),
     clearBtn: document.getElementById('clearBtn'),
-    refreshBtn: document.getElementById('refreshBtn'),
     currentSong: document.getElementById('currentSong'),
     statusText: document.getElementById('statusText'),
     statusIndicator: document.querySelector('.status-indicator'),
@@ -193,10 +190,9 @@ const elements = {
     progressFill: document.getElementById('progressFill'),
     currentTime: document.getElementById('currentTime'),
     totalTime: document.getElementById('totalTime'),
-    // Configuración del backend
+    // Panel de configuración (simplificado)
     backendUrlInput: document.getElementById('backendUrlInput'),
     saveBackendBtn: document.getElementById('saveBackendBtn'),
-    resetBackendBtn: document.getElementById('resetBackendBtn'),
     currentBackendUrl: document.getElementById('currentBackendUrl'),
     settingsToggle: document.getElementById('settingsToggle'),
     settingsPanel: document.getElementById('settingsPanel')
@@ -207,10 +203,9 @@ const elements = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('[Init] Iniciando carga de configuración...');
+    console.log('[Init] Iniciando...');
 
     // 1. Intentar cargar URL del backend desde IONOS
-    // Prioridad: PHP API > JSON estático > config.js > localStorage
     let hostedUrl = await loadBackendUrlFromHosting();
 
     if (!hostedUrl) {
@@ -220,25 +215,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (hostedUrl) {
         backendUrl = hostedUrl;
-        console.log('[Init] URL del backend configurada:', backendUrl);
+        console.log('[Init] URL del backend:', backendUrl);
     } else {
-        // Fallback a config.js o localStorage
         backendUrl = getInitialBackendUrl();
-        console.log('[Init] Usando fallback, URL:', backendUrl || '(origen local)');
+        console.log('[Init] Usando fallback:', backendUrl || '(origen local)');
     }
     configLoaded = true;
 
-    // 2. Inicializar UI de configuración del backend
+    // 2. Inicializar UI
     initBackendSettings();
     attachEventListeners();
 
-    // 3. Restaurar estado para obtener el dispositivo guardado
+    // 3. Restaurar estado del reproductor
     await restoreState();
 
-    // 4. Cargar dispositivos (usará el dispositivo guardado)
-    await loadAudioDevices();
-
-    // 5. Conectar WebSocket
+    // 4. Conectar WebSocket
     initializeWebSocket();
 });
 
@@ -339,19 +330,12 @@ function updateBackendUrlDisplay() {
 function handleConfigUpdate(config) {
     if (!config) return;
 
-    // Actualizar URL del backend si viene del servidor y es diferente
+    // Actualizar URL del backend si viene del servidor
     if (config.backendUrl && config.backendUrl !== backendUrl) {
-        console.log('[Config] URL del servidor actualizada:', config.backendUrl);
-        // Solo actualizar el input, no reconectar (ya estamos conectados)
+        console.log('[Config] URL actualizada:', config.backendUrl);
         if (elements.backendUrlInput) {
             elements.backendUrlInput.value = config.backendUrl;
         }
-    }
-
-    // Actualizar dispositivo de audio
-    if (config.audioDevice) {
-        savedAudioDevice = config.audioDevice;
-        selectAudioDevice(config.audioDevice);
     }
 }
 
@@ -446,11 +430,11 @@ function updateConnectionStatus(connected) {
 function updateStatus(data) {
     if (!data) return;
 
-    const { currentSong: song, queue = [], audioDevice } = data;
+    const { currentSong: song, queue = [] } = data;
 
-    // Log cambios de estado importantes
+    // Log cambios de estado
     if (song && song.status !== currentStatus?.status) {
-        console.log(`[Status Change] ${currentStatus?.status} → ${song.status}`);
+        console.log(`[Status] ${currentStatus?.status} → ${song.status}`);
     }
 
     if (song) {
@@ -459,31 +443,7 @@ function updateStatus(data) {
         updateProgress(song);
     }
 
-    // Guardar y actualizar selector de dispositivo desde el servidor
-    if (audioDevice) {
-        savedAudioDevice = audioDevice;
-        selectAudioDevice(audioDevice);
-    }
-
-    // Actualizar cola
     updateQueueDisplay(queue);
-}
-
-// Seleccionar dispositivo de audio en el dropdown
-function selectAudioDevice(deviceId) {
-    if (!elements.audioDevice || !deviceId) return;
-
-    // Buscar la opción que coincide
-    const options = elements.audioDevice.options;
-    for (let i = 0; i < options.length; i++) {
-        if (options[i].value === deviceId) {
-            elements.audioDevice.selectedIndex = i;
-            console.log('[AudioDevice] Seleccionado:', deviceId);
-            return true;
-        }
-    }
-    console.log('[AudioDevice] No encontrado en lista:', deviceId);
-    return false;
 }
 
 function updateNowPlaying(song) {
@@ -587,34 +547,15 @@ function updateButtonStates() {
     const isPlaying = currentStatus?.status === 'playing';
     const hasQueue = (currentStatus?.queue?.length || 0) > 0;
 
-    // URL input siempre habilitado para poder añadir canciones
     if (elements.urlInput) elements.urlInput.disabled = false;
-
-    // Botón Play siempre habilitado (si reproduce algo, detiene lo actual y empieza lo nuevo)
     if (elements.playBtn) elements.playBtn.disabled = false;
-
-    // Botón Añadir a Cola siempre habilitado
     if (elements.addQueueBtn) elements.addQueueBtn.disabled = false;
 
-    // Refresh siempre habilitado
-    if (elements.refreshBtn) elements.refreshBtn.disabled = false;
-
     if (isPlaying) {
-        // Dispositivo deshabilitado mientras reproduce (no tiene sentido cambiarlo)
-        if (elements.audioDevice) elements.audioDevice.disabled = true;
-
-        // Skip disponible solo si hay cola
         if (elements.skipBtn) elements.skipBtn.disabled = !hasQueue;
-
-        // Stop disponible
         if (elements.stopBtn) elements.stopBtn.disabled = false;
-
-        // Clear queue disponible si hay cola
         if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = !hasQueue;
-
     } else {
-        // Si NO está reproduciendo
-        if (elements.audioDevice) elements.audioDevice.disabled = false;
         if (elements.skipBtn) elements.skipBtn.disabled = true;
         if (elements.stopBtn) elements.stopBtn.disabled = true;
         if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = !hasQueue;
@@ -623,100 +564,16 @@ function updateButtonStates() {
 
 async function restoreState() {
     try {
-        // Cargar estado del reproductor
         const res = await fetch(`${getBackendUrl()}/api/status`);
         const data = await res.json();
         if (data) {
-            // Guardar dispositivo antes de updateStatus para que loadAudioDevices lo use
-            if (data.audioDevice) {
-                savedAudioDevice = data.audioDevice;
-                console.log('[RestoreState] Dispositivo guardado:', savedAudioDevice);
-            }
             updateStatus(data);
         }
-
-        // Cargar configuración del servidor
-        const config = await loadConfigFromServer();
-        if (config) {
-            handleConfigUpdate(config);
-        }
     } catch (error) {
-        console.error('Error restaurando estado:', error);
+        console.error('[RestoreState] Error:', error.message);
     }
 }
 
-// ============================================
-// CARGA DE DISPOSITIVOS DE AUDIO
-// ============================================
-
-async function loadAudioDevices(refresh = false) {
-    console.log('[Load-Devices] 🔊 Iniciando carga de dispositivos...');
-
-    try {
-        const url = refresh
-            ? `${getBackendUrl()}/api/audio-devices?refresh=true`
-            : `${getBackendUrl()}/api/audio-devices`;
-        const response = await fetch(url);
-        console.log('[Load-Devices] ✅ Response recibida, status:', response.status);
-        
-        const data = await response.json();
-        const devices = data.devices || [];
-        console.log('[Load-Devices] 📊 Recibidos:', devices.length, 'dispositivo(s)');
-        
-        if (!elements.audioDevice) {
-            console.warn('[Load-Devices] ⚠️ Elemento audioDevice no encontrado en DOM');
-            return;
-        }
-        
-        // Limpiar opciones anteriores
-        elements.audioDevice.innerHTML = '';
-        
-        if (devices.length === 0) {
-            console.warn('[Load-Devices] ⚠️ No se encontraron dispositivos');
-            elements.audioDevice.innerHTML = '<option value="">No se encontraron dispositivos</option>';
-            showNotification('Advertencia', 'No se detectaron dispositivos de audio. Verifica la instalación de MPV.', 'info');
-            return;
-        }
-        
-        // Opción por defecto
-        elements.audioDevice.innerHTML = '<option value="">Selecciona un dispositivo...</option>';
-        
-        // Agregar dispositivos
-        let cableDeviceId = null;
-        devices.forEach((device, idx) => {
-            const isCable = device.name.toLowerCase().includes('cable');
-            const option = document.createElement('option');
-            option.value = device.id;
-            option.textContent = (isCable ? '⭐ ' : '') + device.name;
-
-            // Recordar el primer dispositivo CABLE
-            if (isCable && !cableDeviceId) {
-                cableDeviceId = device.id;
-            }
-
-            elements.audioDevice.appendChild(option);
-            console.log(`  [${idx + 1}] ${option.textContent}`);
-        });
-
-        // Seleccionar dispositivo: prioridad servidor > CABLE > ninguno
-        if (savedAudioDevice && selectAudioDevice(savedAudioDevice)) {
-            console.log('[Load-Devices] Dispositivo del servidor seleccionado');
-        } else if (cableDeviceId && selectAudioDevice(cableDeviceId)) {
-            console.log('[Load-Devices] CABLE seleccionado por defecto');
-        }
-        
-        console.log('[Load-Devices] ✅ Dispositivos cargados exitosamente');
-        showNotification('✅ Éxito', `Se encontraron ${devices.length} dispositivo(s) de audio`, 'success');
-        
-    } catch (error) {
-        console.error('[Load-Devices] ❌ Error:', error.message);
-        console.error('[Load-Devices] Stack:', error.stack);
-        showNotification('❌ Error', 'No se pudieron cargar los dispositivos de audio', 'error');
-        if (elements.audioDevice) {
-            elements.audioDevice.innerHTML = '<option value="">Error cargando dispositivos</option>';
-        }
-    }
-}
 
 // ============================================
 // EVENT LISTENERS
@@ -754,42 +611,13 @@ function attachEventListeners() {
             if (elements.urlInput) elements.urlInput.value = '';
         });
     }
-    
-    // Botón Recargar Dispositivos
-    if (elements.refreshBtn) {
-        elements.refreshBtn.addEventListener('click', () => {
-            elements.refreshBtn.disabled = true;
-            loadAudioDevices(true).finally(() => {
-                elements.refreshBtn.disabled = false;
-            });
-        });
-    }
-    
-    // Enter en input de URL (usar keydown en lugar de deprecated keypress)
+
+    // Enter en input de URL
     if (elements.urlInput) {
         elements.urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 playMedia();
-            }
-        });
-    }
-
-    // Guardar dispositivo de audio en el servidor cuando se cambie
-    if (elements.audioDevice) {
-        elements.audioDevice.addEventListener('change', async (e) => {
-            const audioDevice = e.target.value;
-            if (audioDevice) {
-                try {
-                    await fetch(`${getBackendUrl()}/api/audio-device`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ audioDevice })
-                    });
-                    console.log('[AudioDevice] Guardado en servidor:', audioDevice);
-                } catch (error) {
-                    console.error('[AudioDevice] Error guardando:', error);
-                }
             }
         });
     }
@@ -800,64 +628,55 @@ function attachEventListeners() {
 // ============================================
 
 async function playMedia() {
-    if (!elements.urlInput || !elements.audioDevice) {
-        showNotification('Error', 'Elementos faltantes en la interfaz', 'error');
+    if (!elements.urlInput) {
+        showNotification('Error', 'Elemento faltante en la interfaz', 'error');
         return;
     }
-    
+
     const url = elements.urlInput.value.trim();
-    const audioDevice = elements.audioDevice.value;
-    
+
     if (!url) {
         showNotification('Error', 'Por favor, pega una URL de YouTube', 'error');
         return;
     }
-    
-    if (!audioDevice) {
-        showNotification('Error', 'Por favor, selecciona un dispositivo de audio', 'error');
-        return;
-    }
-    
+
     // Mostrar estado de carga
     console.log('[Play] Iniciando carga...');
     if (elements.statusText) {
         elements.statusText.innerHTML = '⏳ Cargando canción...';
-        elements.statusText.style.color = '#ffa500';  // Orange
+        elements.statusText.style.color = '#ffa500';
     }
 
-    // Solo deshabilitar botón Play temporalmente para evitar doble click
     if (elements.playBtn) elements.playBtn.disabled = true;
-    
+
     try {
         console.log('[Play] Enviando request a servidor...');
         const response = await fetch(`${getBackendUrl()}/api/play`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, audioDevice })
+            body: JSON.stringify({ url })  // Sin audioDevice - el servidor lo maneja
         });
-        
-        // Verificar si respuesta es JSON válida ANTES de parsear
+
         if (!response.headers.get('content-type')?.includes('application/json')) {
             throw new Error('Respuesta inválida del servidor');
         }
-        
+
         const data = await response.json();
-        
+
         if (!response.ok) {
             throw new Error(data.details || data.error || 'Error desconocido');
         }
-        
-        console.log('[Play] ✅ Respuesta exitosa del servidor');
+
+        console.log('[Play] ✅ Respuesta exitosa');
         showNotification('✅ Reproduciendo', data.song?.title || data.message || 'Canción iniciada', 'success');
         if (elements.urlInput) elements.urlInput.value = '';
-        
+
     } catch (error) {
         console.error('[Play Error]', error);
         showNotification('❌ Error', error.message || 'Error desconocido', 'error');
         if (elements.statusText) elements.statusText.style.color = '';
 
     } finally {
-        // Rehabilitar botón Play
         if (elements.playBtn) elements.playBtn.disabled = false;
     }
 }

@@ -11,11 +11,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const STATE_FILE = path.join(__dirname, 'player-state.json');
 const CONFIG_FILE = path.join(__dirname, 'server-config.json');
+const TUNNEL_URL_FILE = path.join(__dirname, 'tunnel-url.txt');
+
+// Variable global para la URL del túnel
+let tunnelUrl = '';
 
 // Configuración del servidor (compartida con todos los clientes)
 let serverConfig = {
-  backendUrl: '',  // URL pública del backend (túnel de Cloudflare)
-  audioDevice: ''  // Dispositivo de audio seleccionado
+  backendUrl: '',      // URL pública del backend (túnel de Cloudflare)
+  audioDevice: '',     // Dispositivo de audio seleccionado
+  ionosApiUrl: ''      // URL del API en IONOS para publicar automáticamente
 };
 
 // Cargar configuración del servidor
@@ -760,8 +765,16 @@ app.post('/api/audio-device', (req, res) => {
 // GET: Obtener configuración del servidor
 app.get('/api/config', (req, res) => {
   res.json({
-    backendUrl: serverConfig.backendUrl,
+    backendUrl: serverConfig.backendUrl || tunnelUrl,
     audioDevice: serverConfig.audioDevice || savedAudioDevice
+  });
+});
+
+// GET: Obtener solo la URL del túnel (para IONOS)
+app.get('/api/tunnel-url', (req, res) => {
+  res.json({
+    tunnelUrl: tunnelUrl || serverConfig.backendUrl,
+    active: !!cloudflaredProcess
   });
 });
 
@@ -830,6 +843,112 @@ loadAudioDevices().then(() => {
   console.log('[Startup] Dispositivos de audio cargados en caché');
 });
 
+// ===== CLOUDFLARED TUNNEL =====
+let cloudflaredProcess = null;
+
+function startCloudflared() {
+  return new Promise((resolve) => {
+    console.log('[Cloudflared] Iniciando túnel...');
+
+    cloudflaredProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${PORT}`], {
+      shell: true
+    });
+
+    let urlFound = false;
+
+    const processOutput = (data) => {
+      const output = data.toString();
+
+      // Buscar la URL del túnel en el output
+      const urlMatch = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+      if (urlMatch && !urlFound) {
+        urlFound = true;
+        tunnelUrl = urlMatch[0];
+        console.log('[Cloudflared] ✅ Túnel activo:', tunnelUrl);
+
+        // Guardar URL en archivo local
+        fs.writeFileSync(TUNNEL_URL_FILE, tunnelUrl);
+
+        // Actualizar configuración del servidor
+        serverConfig.backendUrl = tunnelUrl;
+        saveServerConfig();
+
+        // Publicar a IONOS
+        publishTunnelUrl(tunnelUrl);
+
+        resolve(tunnelUrl);
+      }
+
+      // Mostrar logs de cloudflared
+      if (output.trim()) {
+        output.split('\n').forEach(line => {
+          if (line.trim()) console.log('[Cloudflared]', line.trim());
+        });
+      }
+    };
+
+    cloudflaredProcess.stdout.on('data', processOutput);
+    cloudflaredProcess.stderr.on('data', processOutput);
+
+    cloudflaredProcess.on('error', (error) => {
+      console.error('[Cloudflared] Error:', error.message);
+      resolve(null);
+    });
+
+    cloudflaredProcess.on('close', (code) => {
+      console.log('[Cloudflared] Proceso cerrado con código:', code);
+      cloudflaredProcess = null;
+    });
+
+    // Timeout si no encuentra la URL en 30 segundos
+    setTimeout(() => {
+      if (!urlFound) {
+        console.error('[Cloudflared] Timeout esperando URL del túnel');
+        resolve(null);
+      }
+    }, 30000);
+  });
+}
+
+// Publicar URL del túnel a IONOS
+async function publishTunnelUrl(url) {
+  const ionosApiUrl = serverConfig.ionosApiUrl;
+  if (!ionosApiUrl) {
+    console.log('[Publish] No hay URL de IONOS configurada, omitiendo publicación');
+    return;
+  }
+
+  try {
+    console.log('[Publish] Publicando URL a IONOS:', ionosApiUrl);
+    const response = await fetch(ionosApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backendUrl: url })
+    });
+
+    if (response.ok) {
+      console.log('[Publish] ✅ URL publicada correctamente en IONOS');
+    } else {
+      console.log('[Publish] Error publicando:', response.status);
+    }
+  } catch (error) {
+    console.error('[Publish] Error:', error.message);
+  }
+}
+
+// Cerrar cloudflared al salir
+function stopCloudflared() {
+  if (cloudflaredProcess) {
+    console.log('[Cloudflared] Cerrando túnel...');
+    if (process.platform === 'win32') {
+      exec(`taskkill /F /T /PID ${cloudflaredProcess.pid}`, () => {});
+    } else {
+      cloudflaredProcess.kill('SIGTERM');
+    }
+    cloudflaredProcess = null;
+  }
+}
+
 // ===== INTERVALO DE BROADCAST EN TIEMPO REAL =====
 // Enviar actualización de estado cada 500ms mientras se está reproduciendo
 setInterval(() => {
@@ -862,31 +981,57 @@ setInterval(() => {
 }, 500);
 
 // Iniciar servidor (HTTP + WebSocket en el mismo puerto)
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║     🎵 Discord DJ Web Controller - Servidor Iniciado 🎵    ║
 ╠════════════════════════════════════════════════════════════╣
 ║                                                            ║
 ║  Servidor HTTP+WS:  http://localhost:${PORT}                  ║
-║  WebSocket:         ws://localhost:${PORT}                    ║
-║                                                            ║
-║  Panel de Control:  http://localhost:${PORT}                  ║
-║                                                            ║
 ║  Cola restaurada:   ${queue.length} canciones                       ║
 ║                                                            ║
-╠════════════════════════════════════════════════════════════╣
-║  Modo Híbrido:                                             ║
-║  • Listo para túnel (Cloudflare/ngrok)                    ║
-║  • HTTP y WebSocket en el mismo puerto                    ║
-║  • CORS habilitado para cualquier origen                  ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+
+  // Iniciar cloudflared automáticamente
+  console.log('[Startup] Iniciando túnel de Cloudflare...');
+  const url = await startCloudflared();
+
+  if (url) {
+    console.log(`
+╔════════════════════════════════════════════════════════════╗
+║  ✅ TÚNEL ACTIVO                                           ║
+╠════════════════════════════════════════════════════════════╣
+║                                                            ║
+║  URL Pública: ${url.padEnd(43)}║
+║                                                            ║
+║  Comparte esta URL o accede desde dj.mingod.es            ║
+╚════════════════════════════════════════════════════════════╝
+    `);
+  } else {
+    console.log(`
+╔════════════════════════════════════════════════════════════╗
+║  ⚠️  TÚNEL NO DISPONIBLE                                   ║
+╠════════════════════════════════════════════════════════════╣
+║  Cloudflared no está instalado o falló al iniciar.        ║
+║  Instala con: winget install Cloudflare.cloudflared       ║
+║  El servidor funciona localmente en localhost:${PORT}        ║
+╚════════════════════════════════════════════════════════════╝
+    `);
+  }
 });
 
 // Manejo de cierre graceful
 process.on('SIGINT', () => {
   console.log('\nCerrando servidor...');
   stopCurrentPlayback();
+  stopCloudflared();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\nCerrando servidor...');
+  stopCurrentPlayback();
+  stopCloudflared();
   process.exit(0);
 });
