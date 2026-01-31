@@ -8,6 +8,7 @@ config.js
 # State files
 player-state.json
 server-config.json
+tunnel-url.txt
 
 # External binaries
 mpv-*/
