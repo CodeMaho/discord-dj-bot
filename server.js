@@ -90,7 +90,6 @@ let currentSong = {
 let savedAudioDevice = '';
 let activeConnections = 0;
 let manualStop = false; // Flag para diferenciar stop manual vs finalización natural
-let disconnectTimer = null; // Timer para grace period al desconectar
 let isStartingPlayback = false; // Lock para evitar reproducciones simultáneas
 let cachedAudioDevices = []; // Cache de dispositivos de audio
 
@@ -223,13 +222,6 @@ wss.on('connection', (ws) => {
   activeConnections++;
   console.log(`Cliente WebSocket conectado (${activeConnections} activos)`);
 
-  // Cancelar timer de desconexión si existe (cliente se reconectó a tiempo)
-  if (disconnectTimer) {
-    clearTimeout(disconnectTimer);
-    disconnectTimer = null;
-    console.log('Reconexión detectada - cancelando auto-stop');
-  }
-
   // Enviar estado actual al conectarse
   ws.send(JSON.stringify({
     type: 'status',
@@ -250,22 +242,11 @@ wss.on('connection', (ws) => {
     }
   }));
 
-  // Solo detener si no hay más clientes conectados (con grace period)
+  // Cuando un cliente se desconecta, solo registrar (la música sigue sonando)
   ws.on('close', () => {
     activeConnections--;
     console.log(`Cliente WebSocket desconectado (${activeConnections} activos)`);
-
-    // Grace period de 5 segundos antes de detener (permite recargar página)
-    if (activeConnections === 0) {
-      console.log('No hay clientes activos - esperando 5s antes de detener...');
-      disconnectTimer = setTimeout(() => {
-        if (activeConnections === 0) {
-          console.log('Sin reconexión después de 5s - Deteniendo reproducción');
-          stopCurrentPlayback();
-        }
-        disconnectTimer = null;
-      }, 5000);
-    }
+    // La música sigue reproduciéndose aunque no haya clientes conectados
   });
 });
 
