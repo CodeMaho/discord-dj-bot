@@ -2,6 +2,7 @@ const express = require('express');
 const WebSocket = require('ws');
 const cors = require('cors');
 const http = require('http');
+const https = require('https');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -906,30 +907,45 @@ function startCloudflared() {
   });
 }
 
-// Publicar URL del túnel a IONOS
-async function publishTunnelUrl(url) {
-  const ionosApiUrl = serverConfig.ionosApiUrl;
-  if (!ionosApiUrl) {
-    console.log('[Publish] No hay URL de IONOS configurada, omitiendo publicación');
-    return;
-  }
+// Publicar URL del túnel a IONOS usando HTTPS nativo
+function publishTunnelUrl(tunnelUrlToPublish) {
+  const ionosUrl = serverConfig.ionosApiUrl || 'https://dj.mingod.es/api/config.php';
 
-  try {
-    console.log('[Publish] Publicando URL a IONOS:', ionosApiUrl);
-    const response = await fetch(ionosApiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ backendUrl: url })
-    });
+  console.log('[Publish] Publicando URL a IONOS:', ionosUrl);
 
-    if (response.ok) {
-      console.log('[Publish] ✅ URL publicada correctamente en IONOS');
-    } else {
-      console.log('[Publish] Error publicando:', response.status);
+  const postData = JSON.stringify({ backendUrl: tunnelUrlToPublish });
+
+  const urlParts = new URL(ionosUrl);
+  const options = {
+    hostname: urlParts.hostname,
+    port: 443,
+    path: urlParts.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData)
     }
-  } catch (error) {
-    console.error('[Publish] Error:', error.message);
-  }
+  };
+
+  const req = https.request(options, (res) => {
+    let data = '';
+    res.on('data', chunk => data += chunk);
+    res.on('end', () => {
+      if (res.statusCode === 200) {
+        console.log('[Publish] ✅ URL publicada correctamente en IONOS');
+        console.log('[Publish] Respuesta:', data);
+      } else {
+        console.log('[Publish] Error HTTP:', res.statusCode, data);
+      }
+    });
+  });
+
+  req.on('error', (error) => {
+    console.log('[Publish] Error de conexión:', error.message);
+  });
+
+  req.write(postData);
+  req.end();
 }
 
 // Cerrar cloudflared al salir

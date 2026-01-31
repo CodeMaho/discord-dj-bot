@@ -205,6 +205,23 @@ const elements = {
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Init] Iniciando...');
 
+    // Inicializar UI primero
+    initBackendSettings();
+    attachEventListeners();
+
+    // Intentar conectar
+    await tryConnect();
+
+    // Reintentar cargar config cada 10 segundos si no está conectado
+    setInterval(async () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            console.log('[AutoRetry] Reintentando cargar configuración...');
+            await tryConnect();
+        }
+    }, 10000);
+});
+
+async function tryConnect() {
     // 1. Intentar cargar URL del backend desde IONOS
     let hostedUrl = await loadBackendUrlFromHosting();
 
@@ -222,16 +239,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     configLoaded = true;
 
-    // 2. Inicializar UI
-    initBackendSettings();
-    attachEventListeners();
+    updateBackendUrlDisplay();
 
-    // 3. Restaurar estado del reproductor
+    // 2. Restaurar estado del reproductor
     await restoreState();
 
-    // 4. Conectar WebSocket
+    // 3. Conectar WebSocket
     initializeWebSocket();
-});
+}
 
 // ============================================
 // CONFIGURACIÓN DEL BACKEND UI
@@ -344,9 +359,21 @@ function handleConfigUpdate(config) {
 // ============================================
 
 function initializeWebSocket() {
+    // No reconectar si ya hay conexión activa
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        console.log('[WebSocket] Ya conectado');
+        return;
+    }
+
+    // Cerrar conexión anterior si existe
+    if (ws) {
+        ws.close();
+    }
+
     const wsUrl = getWebSocketUrl();
     console.log('[WebSocket] Conectando a:', wsUrl);
 
+    updateConnectionStatusConnecting();
     ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
@@ -409,18 +436,27 @@ function initializeWebSocket() {
 
 function updateConnectionStatus(connected) {
     if (!elements.connectionStatus) return;
-    
+
+    const statusText = elements.connectionStatus.querySelector('.status-text');
+
     if (connected) {
         elements.connectionStatus.classList.add('connected');
-        elements.connectionStatus.classList.remove('disconnected');
-        const statusText = elements.connectionStatus.querySelector('.status-text');
+        elements.connectionStatus.classList.remove('disconnected', 'connecting');
         if (statusText) statusText.textContent = 'Conectado';
     } else {
         elements.connectionStatus.classList.remove('connected');
         elements.connectionStatus.classList.add('disconnected');
-        const statusText = elements.connectionStatus.querySelector('.status-text');
         if (statusText) statusText.textContent = 'Desconectado';
     }
+}
+
+function updateConnectionStatusConnecting() {
+    if (!elements.connectionStatus) return;
+
+    elements.connectionStatus.classList.remove('connected', 'disconnected');
+    elements.connectionStatus.classList.add('connecting');
+    const statusText = elements.connectionStatus.querySelector('.status-text');
+    if (statusText) statusText.textContent = 'Conectando...';
 }
 
 // ============================================
