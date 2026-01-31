@@ -6,14 +6,33 @@
 // CONFIGURACIÓN DEL BACKEND
 // ============================================
 
-// URL del backend: localStorage para recordar entre sesiones
-let backendUrl = localStorage.getItem('backendUrl') || '';
+// Obtener URL del backend con prioridad:
+// 1. config.js (DJ_CONFIG.BACKEND_URL) - compartido por todos los usuarios
+// 2. localStorage - para override local/desarrollo
+// 3. window.location.origin - modo local (mismo servidor)
+function getInitialBackendUrl() {
+    // Prioridad 1: config.js (archivo estático en IONOS)
+    if (typeof DJ_CONFIG !== 'undefined' && DJ_CONFIG.BACKEND_URL) {
+        console.log('[Config] Usando URL de config.js:', DJ_CONFIG.BACKEND_URL);
+        return DJ_CONFIG.BACKEND_URL;
+    }
+    // Prioridad 2: localStorage (override local)
+    const stored = localStorage.getItem('backendUrl');
+    if (stored) {
+        console.log('[Config] Usando URL de localStorage:', stored);
+        return stored;
+    }
+    // Prioridad 3: mismo origen (modo local)
+    console.log('[Config] Usando origen local:', window.location.origin);
+    return '';
+}
+
+let backendUrl = getInitialBackendUrl();
 
 function getBackendUrl() {
     if (backendUrl) {
         return backendUrl.replace(/\/$/, ''); // Quitar trailing slash
     }
-    // Si no hay URL configurada, usar la misma del frontend
     return window.location.origin;
 }
 
@@ -30,6 +49,8 @@ function saveBackendUrlLocal(url) {
         localStorage.setItem('backendUrl', url);
     } else {
         localStorage.removeItem('backendUrl');
+        // Si se borra, volver a usar config.js si existe
+        backendUrl = getInitialBackendUrl();
     }
 }
 
