@@ -6,28 +6,63 @@
 // CONFIGURACIÓN DEL BACKEND
 // ============================================
 
-// Obtener URL del backend con prioridad:
-// 1. config.js (DJ_CONFIG.BACKEND_URL) - compartido por todos los usuarios
-// 2. localStorage - para override local/desarrollo
-// 3. window.location.origin - modo local (mismo servidor)
+let backendUrl = '';
+let configLoaded = false;
+
+// Cargar URL del backend desde el API PHP en IONOS
+async function loadBackendUrlFromHosting() {
+    try {
+        // El API PHP está en el mismo servidor que el frontend (IONOS)
+        const response = await fetch('/api/config.php');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.backendUrl) {
+                console.log('[Config] URL cargada desde IONOS:', data.backendUrl);
+                return data.backendUrl;
+            }
+        }
+    } catch (error) {
+        console.log('[Config] API PHP no disponible, usando fallback');
+    }
+    return null;
+}
+
+// Guardar URL del backend en IONOS (via PHP)
+async function saveBackendUrlToHosting(url) {
+    try {
+        const response = await fetch('/api/config.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ backendUrl: url })
+        });
+        if (response.ok) {
+            const data = await response.json();
+            console.log('[Config] URL guardada en IONOS:', data);
+            return true;
+        }
+    } catch (error) {
+        console.error('[Config] Error guardando en IONOS:', error);
+    }
+    return false;
+}
+
+// Obtener URL inicial (fallback si PHP no está disponible)
 function getInitialBackendUrl() {
-    // Prioridad 1: config.js (archivo estático en IONOS)
+    // Prioridad 1: config.js (archivo estático)
     if (typeof DJ_CONFIG !== 'undefined' && DJ_CONFIG.BACKEND_URL) {
         console.log('[Config] Usando URL de config.js:', DJ_CONFIG.BACKEND_URL);
         return DJ_CONFIG.BACKEND_URL;
     }
-    // Prioridad 2: localStorage (override local)
+    // Prioridad 2: localStorage (desarrollo local)
     const stored = localStorage.getItem('backendUrl');
     if (stored) {
         console.log('[Config] Usando URL de localStorage:', stored);
         return stored;
     }
     // Prioridad 3: mismo origen (modo local)
-    console.log('[Config] Usando origen local:', window.location.origin);
+    console.log('[Config] Usando origen local');
     return '';
 }
-
-let backendUrl = getInitialBackendUrl();
 
 function getBackendUrl() {
     if (backendUrl) {
@@ -139,14 +174,27 @@ const elements = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // Inicializar UI de configuración del backend
+    // 1. Cargar URL del backend desde IONOS (PHP) primero
+    const hostedUrl = await loadBackendUrlFromHosting();
+    if (hostedUrl) {
+        backendUrl = hostedUrl;
+    } else {
+        // Fallback a config.js o localStorage
+        backendUrl = getInitialBackendUrl();
+    }
+    configLoaded = true;
+
+    // 2. Inicializar UI de configuración del backend
     initBackendSettings();
     attachEventListeners();
-    // Primero restaurar estado para obtener el dispositivo guardado
+
+    // 3. Restaurar estado para obtener el dispositivo guardado
     await restoreState();
-    // Luego cargar dispositivos (usará el dispositivo guardado)
+
+    // 4. Cargar dispositivos (usará el dispositivo guardado)
     await loadAudioDevices();
-    // Finalmente conectar WebSocket
+
+    // 5. Conectar WebSocket
     initializeWebSocket();
 });
 
@@ -179,8 +227,20 @@ function initBackendSettings() {
         elements.saveBackendBtn.addEventListener('click', async () => {
             const newUrl = elements.backendUrlInput?.value.trim() || '';
 
-            // Guardar localmente primero (para poder reconectar)
-            saveBackendUrlLocal(newUrl);
+            // Guardar en IONOS (PHP) para que todos los usuarios lo vean
+            showNotification('Guardando', 'Guardando configuración...', 'info');
+
+            const saved = await saveBackendUrlToHosting(newUrl);
+            if (saved) {
+                showNotification('Guardado', 'URL guardada. Todos los usuarios usarán esta URL.', 'success');
+            } else {
+                // Fallback a localStorage si PHP no está disponible
+                saveBackendUrlLocal(newUrl);
+                showNotification('Guardado', 'URL guardada localmente (PHP no disponible).', 'info');
+            }
+
+            // Actualizar variable local
+            backendUrl = newUrl;
             updateBackendUrlDisplay();
 
             // Reconectar WebSocket con nueva URL
@@ -188,25 +248,18 @@ function initBackendSettings() {
                 ws.close();
             }
             reconnectAttempts = 0;
-
-            showNotification('Guardando', 'Conectando al nuevo servidor...', 'info');
-
-            // Esperar a reconectar y luego guardar en el servidor
-            setTimeout(async () => {
-                initializeWebSocket();
-                // Esperar a que se establezca la conexión
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                // Guardar en el servidor remoto
-                await saveConfigToServer({ backendUrl: newUrl });
-                showNotification('Guardado', 'Configuración guardada en el servidor', 'success');
-            }, 500);
+            setTimeout(() => initializeWebSocket(), 500);
         });
     }
 
     // Resetear URL del backend (usar servidor local)
     if (elements.resetBackendBtn) {
         elements.resetBackendBtn.addEventListener('click', async () => {
+            // Limpiar en IONOS
+            await saveBackendUrlToHosting('');
             saveBackendUrlLocal('');
+
+            backendUrl = '';
             if (elements.backendUrlInput) {
                 elements.backendUrlInput.value = '';
             }
