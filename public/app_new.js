@@ -99,7 +99,12 @@ function getInitialBackendUrl() {
 
 function getBackendUrl() {
     if (backendUrl) {
-        return backendUrl.replace(/\/$/, ''); // Quitar trailing slash
+        let url = backendUrl.replace(/\/$/, ''); // Quitar trailing slash
+        // Asegurar que tenga protocolo
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+        }
+        return url;
     }
     return window.location.origin;
 }
@@ -112,6 +117,10 @@ function getWebSocketUrl() {
 }
 
 function saveBackendUrlLocal(url) {
+    // Asegurar que tenga protocolo antes de guardar
+    if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
     backendUrl = url;
     if (url) {
         localStorage.setItem('backendUrl', url);
