@@ -13,16 +13,32 @@ let configLoaded = false;
 async function loadBackendUrlFromHosting() {
     try {
         // El API PHP está en el mismo servidor que el frontend (IONOS)
-        const response = await fetch('/api/config.php');
+        const response = await fetch('/api/config.php', {
+            method: 'GET',
+            cache: 'no-cache'  // Evitar caché
+        });
+        console.log('[Config] Respuesta PHP status:', response.status);
+
         if (response.ok) {
-            const data = await response.json();
-            if (data.backendUrl) {
-                console.log('[Config] URL cargada desde IONOS:', data.backendUrl);
-                return data.backendUrl;
+            const text = await response.text();
+            console.log('[Config] Respuesta PHP raw:', text);
+
+            try {
+                const data = JSON.parse(text);
+                if (data.backendUrl) {
+                    console.log('[Config] URL cargada desde IONOS:', data.backendUrl);
+                    return data.backendUrl;
+                } else {
+                    console.log('[Config] PHP respondió pero sin backendUrl configurada');
+                }
+            } catch (parseError) {
+                console.error('[Config] Error parseando JSON:', parseError, 'Raw:', text);
             }
+        } else {
+            console.log('[Config] PHP respondió con error:', response.status);
         }
     } catch (error) {
-        console.log('[Config] API PHP no disponible, usando fallback');
+        console.error('[Config] API PHP no disponible:', error.message);
     }
     return null;
 }
@@ -44,6 +60,23 @@ async function saveBackendUrlToHosting(url) {
         console.error('[Config] Error guardando en IONOS:', error);
     }
     return false;
+}
+
+// Intentar cargar desde archivo JSON estático (fallback si PHP no funciona)
+async function loadBackendUrlFromJson() {
+    try {
+        const response = await fetch('/api/backend-url.json', { cache: 'no-cache' });
+        if (response.ok) {
+            const data = await response.json();
+            if (data.backendUrl) {
+                console.log('[Config] URL cargada desde JSON estático:', data.backendUrl);
+                return data.backendUrl;
+            }
+        }
+    } catch (error) {
+        console.log('[Config] JSON estático no disponible');
+    }
+    return null;
 }
 
 // Obtener URL inicial (fallback si PHP no está disponible)
@@ -174,13 +207,24 @@ const elements = {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Cargar URL del backend desde IONOS (PHP) primero
-    const hostedUrl = await loadBackendUrlFromHosting();
+    console.log('[Init] Iniciando carga de configuración...');
+
+    // 1. Intentar cargar URL del backend desde IONOS
+    // Prioridad: PHP API > JSON estático > config.js > localStorage
+    let hostedUrl = await loadBackendUrlFromHosting();
+
+    if (!hostedUrl) {
+        console.log('[Init] PHP no disponible, intentando JSON estático...');
+        hostedUrl = await loadBackendUrlFromJson();
+    }
+
     if (hostedUrl) {
         backendUrl = hostedUrl;
+        console.log('[Init] URL del backend configurada:', backendUrl);
     } else {
         // Fallback a config.js o localStorage
         backendUrl = getInitialBackendUrl();
+        console.log('[Init] Usando fallback, URL:', backendUrl || '(origen local)');
     }
     configLoaded = true;
 
@@ -279,8 +323,15 @@ function initBackendSettings() {
 function updateBackendUrlDisplay() {
     if (elements.currentBackendUrl) {
         const url = getBackendUrl();
-        elements.currentBackendUrl.textContent = url;
-        elements.currentBackendUrl.title = url;
+        elements.currentBackendUrl.textContent = url || '(no configurado)';
+        elements.currentBackendUrl.title = url || 'No hay URL configurada';
+
+        // Indicador visual de estado
+        if (url && url !== window.location.origin) {
+            elements.currentBackendUrl.style.color = '#4ade80'; // Verde - configurado
+        } else {
+            elements.currentBackendUrl.style.color = '#fbbf24'; // Amarillo - local/no configurado
+        }
     }
 }
 
