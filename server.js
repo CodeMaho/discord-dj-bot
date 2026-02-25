@@ -6,6 +6,7 @@ const https = require('https');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 
 const app = express();
@@ -347,6 +348,7 @@ const BeatAnalyzer = (() => {
   const COOLDOWN_MS   = 190;         // mínimo ms entre beats (~315 BPM máx)
 
   function broadcastBeat(intensity) {
+    if (currentSong.status !== 'playing') return; // no enviar beats cuando está pausado
     const msg = JSON.stringify({ type: 'beat', intensity });
     wss.clients.forEach(c => {
       if (c.readyState === WebSocket.OPEN) c.send(msg);
@@ -604,12 +606,16 @@ async function playWithMPV(url, audioDevice, title = null) {
       broadcastStatus();
       BeatAnalyzer.start(url);
       
+      // Ruta del IPC: named pipe en Windows, socket Unix en Linux/Mac
+      const ipcPath = process.platform === 'win32' ? 'mpvdj' : '/tmp/mpvdj.sock';
+
       const mpvArgs = [
         '--no-video',
         '--volume=100',
-        '--ytdl-format=bestaudio'
+        '--ytdl-format=bestaudio',
+        `--input-ipc-server=${ipcPath}`
       ];
-      
+
       // Solo agregar dispositivo de audio si es válido
       if (audioDevice && audioDevice.trim()) {
         mpvArgs.push('--audio-device=' + audioDevice);
@@ -1069,10 +1075,53 @@ app.post('/api/play-with-mix', async (req, res) => {
 // POST: Detener reproducción
 app.post('/api/stop', (req, res) => {
   stopCurrentPlayback();
-  res.json({ 
-    success: true, 
-    message: 'Reproducción detenida' 
+  res.json({
+    success: true,
+    message: 'Reproducción detenida'
   });
+});
+
+// POST: Pausar / reanudar la canción actual en el mismo minuto
+app.post('/api/pause-resume', async (req, res) => {
+  if (!currentProcess) {
+    return res.status(400).json({ error: 'No hay reproducción activa' });
+  }
+
+  const isPaused  = currentSong.status === 'paused';
+  const ipcPipe   = process.platform === 'win32'
+    ? '\\\\.\\pipe\\mpvdj'
+    : '/tmp/mpvdj.sock';
+  const command   = JSON.stringify({ command: ['set_property', 'pause', !isPaused] }) + '\n';
+
+  try {
+    await new Promise((resolve, reject) => {
+      const client  = net.createConnection(ipcPipe);
+      const timeout = setTimeout(() => { client.destroy(); reject(new Error('timeout')); }, 1500);
+      client.on('connect', () => {
+        client.write(command);
+        clearTimeout(timeout);
+        client.end();
+        resolve();
+      });
+      client.on('error', (err) => { clearTimeout(timeout); reject(err); });
+    });
+
+    currentSong.status = isPaused ? 'playing' : 'paused';
+    if (!isPaused) {
+      // Al pausar: actualizar startedAt para que el tiempo transcurrido sea correcto al reanudar
+      currentSong.pausedAt = Date.now();
+    } else {
+      // Al reanudar: compensar el tiempo pausado
+      if (currentSong.pausedAt) {
+        currentSong.startedAt += Date.now() - currentSong.pausedAt;
+        delete currentSong.pausedAt;
+      }
+    }
+    broadcastStatus();
+    res.json({ success: true, status: currentSong.status });
+  } catch (e) {
+    res.status(500).json({ error: 'No se pudo comunicar con MPV: ' + e.message });
+  }
 });
 
 // POST: Saltar a la siguiente canción

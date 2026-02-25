@@ -207,7 +207,8 @@ const elements = {
     saveBackendBtn: document.getElementById('saveBackendBtn'),
     currentBackendUrl: document.getElementById('currentBackendUrl'),
     settingsToggle: document.getElementById('settingsToggle'),
-    settingsPanel: document.getElementById('settingsPanel')
+    settingsPanel: document.getElementById('settingsPanel'),
+    pauseResumeBtn: document.getElementById('pauseResumeBtn')
 };
 
 // ============================================
@@ -757,18 +758,27 @@ function updateNowPlaying(song) {
     if (elements.statusText) {
         const statusMap = {
             'playing': '▶️ Reproduciendo',
+            'paused':  '⏸ Pausado',
             'stopped': '⏹️ Detenido',
-            'error': '❌ Error'
+            'error':   '❌ Error'
         };
         elements.statusText.textContent = statusMap[song.status] || 'Desconocido';
     }
-    
+
     // Actualizar indicador visual
     if (elements.statusIndicator) {
         elements.statusIndicator.classList.remove('playing', 'stopped');
         elements.statusIndicator.classList.add(song.status === 'playing' ? 'playing' : 'stopped');
     }
-    
+
+    // Botón pause/resume: visible cuando hay canción activa (playing o paused)
+    if (elements.pauseResumeBtn) {
+        const active = song.status === 'playing' || song.status === 'paused';
+        elements.pauseResumeBtn.style.display = active ? 'flex' : 'none';
+        elements.pauseResumeBtn.textContent   = song.status === 'paused' ? '▶' : '⏸';
+        elements.pauseResumeBtn.title         = song.status === 'paused' ? 'Reanudar' : 'Pausar';
+    }
+
     // Sincronizar stickers con estado de reproducción
     StickersSystem.setPlaying(song.status === 'playing');
 
@@ -1052,14 +1062,23 @@ function attachEventListeners() {
         });
     }
 
-    // Enter en input de URL
+    // Enter → reproducir | Shift+Enter → añadir a cola
     if (elements.urlInput) {
         elements.urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                playMedia();
+                if (e.shiftKey) {
+                    addToQueue();
+                } else {
+                    playMedia();
+                }
             }
         });
+    }
+
+    // Botón pause/resume del now-playing
+    if (elements.pauseResumeBtn) {
+        elements.pauseResumeBtn.addEventListener('click', pauseResumeMedia);
     }
 }
 
@@ -1243,6 +1262,25 @@ async function stopMedia() {
         showNotification('❌ Error', error.message || 'No se pudo detener la reproducción', 'error');
     } finally {
         if (elements.stopBtn) elements.stopBtn.disabled = false;
+    }
+}
+
+async function pauseResumeMedia() {
+    if (!elements.pauseResumeBtn) return;
+    elements.pauseResumeBtn.disabled = true;
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/pause-resume`, { method: 'POST' });
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Error desconocido');
+        }
+        const data = await response.json();
+        const label = data.status === 'paused' ? '⏸ Pausado' : '▶️ Reanudado';
+        showNotification(label, '', 'success');
+    } catch (error) {
+        showNotification('❌ Error', error.message || 'No se pudo pausar/reanudar', 'error');
+    } finally {
+        if (elements.pauseResumeBtn) elements.pauseResumeBtn.disabled = false;
     }
 }
 
