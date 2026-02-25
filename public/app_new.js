@@ -704,14 +704,19 @@ function initQueueDragDrop() {
 async function reorderQueue(from, to) {
     try {
         const response = await fetch(`${getBackendUrl()}/api/queue/reorder`, {
-            method: 'PUT',
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ from, to })
         });
 
         if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Error al reordenar');
+            // Intentar parsear el error como JSON; si no es JSON (ej: HTML de Express/proxy), usar mensaje genérico
+            let errorMsg = `Error ${response.status} al reordenar la cola`;
+            try {
+                const data = await response.json();
+                errorMsg = data.error || errorMsg;
+            } catch { /* respuesta no es JSON */ }
+            throw new Error(errorMsg);
         }
     } catch (error) {
         console.error('[Reorder] Error:', error);

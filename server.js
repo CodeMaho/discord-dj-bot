@@ -1042,8 +1042,8 @@ app.post('/api/queue', async (req, res) => {
 });
 
 // DELETE: Eliminar canción de la cola
-// PUT: Reordenar cola (mover canción de posición `from` a posición `to`)
-app.put('/api/queue/reorder', (req, res) => {
+// POST: Reordenar cola (mover canción de posición `from` a posición `to`)
+app.post('/api/queue/reorder', (req, res) => {
   const { from, to } = req.body;
 
   if (from === undefined || to === undefined) {
