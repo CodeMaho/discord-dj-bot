@@ -57,6 +57,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.static('public'));
+app.use('/gifts', express.static(path.join(__dirname, 'gifts')));
 
 // Single instance de YTDlpWrap (evitar memory leaks)
 // Configurar para usar Node.js como runtime de JavaScript (requerido por YouTube)
@@ -592,6 +593,17 @@ async function playWithMPV(url, audioDevice, title = null) {
 }
 
 // API Endpoints
+
+// GET: Listar GIFs disponibles en /gifts/
+app.get('/api/gifs', (req, res) => {
+  const gifDir = path.join(__dirname, 'gifts');
+  try {
+    const files = fs.readdirSync(gifDir).filter(f => /\.gif$/i.test(f));
+    res.json({ gifs: files.map(f => `/gifts/${encodeURIComponent(f)}`) });
+  } catch (e) {
+    res.json({ gifs: [] });
+  }
+});
 
 // GET: Estado actual
 app.get('/api/status', (req, res) => {

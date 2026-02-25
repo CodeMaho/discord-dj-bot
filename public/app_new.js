@@ -214,6 +214,186 @@ const elements = {
 // INICIALIZACIÓN
 // ============================================
 
+// ============================================
+// BOUNCING STICKERS — estilo DVD logo
+// Los stickers rebotan por la pantalla y reaccionan al ritmo de la música.
+// La reacción al audio se simula mediante un BPM de 120 (beat cada 500ms)
+// sincronizado con el inicio de la reproducción.
+// ============================================
+
+const StickersSystem = (() => {
+    const COUNT      = 4;          // stickers simultáneos en pantalla
+    const BASE_SIZE  = 90;         // tamaño base en px (varía ±15 por sticker)
+    const PLAY_SPEED = 140;        // velocidad px/s cuando hay música
+    const IDLE_SPEED = 30;         // velocidad px/s cuando está parado
+    const BPM        = 120;        // BPM simulado para la reacción al ritmo
+    const BEAT_MS    = 60000 / BPM;// ms por beat (500ms a 120 BPM)
+
+    let overlay     = null;
+    let stickers    = [];
+    let gifUrls     = [];
+    let rafId       = null;
+    let lastTime    = 0;
+    let lastBeatTime = 0;
+    let playing     = false;
+
+    // ── Cargar lista de GIFs del backend ──────────────────────────────────
+    async function loadGifs() {
+        try {
+            const res  = await fetch(`${getBackendUrl()}/api/gifs`);
+            const data = await res.json();
+            gifUrls    = data.gifs || [];
+            console.log(`[Stickers] ${gifUrls.length} GIFs encontrados`);
+        } catch (e) {
+            console.warn('[Stickers] No se pudieron cargar GIFs:', e.message);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function rnd(a, b)  { return a + Math.random() * (b - a); }
+    function pick(arr)  { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    // ── Crear overlay fullscreen sin bloquear interacción ─────────────────
+    function createOverlay() {
+        overlay            = document.createElement('div');
+        overlay.id         = 'stickers-overlay';
+        document.body.appendChild(overlay);
+    }
+
+    // ── Crear un sticker con posición y dirección aleatorias ──────────────
+    function makeSticker(url) {
+        const size  = Math.round(rnd(BASE_SIZE - 15, BASE_SIZE + 15));
+        const angle = rnd(0, Math.PI * 2);
+        const speed = IDLE_SPEED;
+
+        const el     = document.createElement('img');
+        el.src       = url;
+        el.className = 'sticker';
+        overlay.appendChild(el);
+
+        return {
+            el,
+            x:     rnd(0, window.innerWidth  - size),
+            y:     rnd(0, window.innerHeight - size),
+            vx:    Math.cos(angle) * speed,
+            vy:    Math.sin(angle) * speed,
+            size,           // tamaño visual base
+            pulse: 0,       // 0-1: intensidad del pulso actual
+            hue:   Math.floor(rnd(0, 360)),
+        };
+    }
+
+    // ── Disparar en cada beat simulado ────────────────────────────────────
+    function onBeat() {
+        stickers.forEach(s => {
+            s.pulse = 1.0;
+            // Impulso de velocidad proporcional al beat
+            const spd     = Math.hypot(s.vx, s.vy);
+            const maxBoost = PLAY_SPEED * 1.7;
+            if (spd > 0) {
+                const newSpd = Math.min(spd * 1.25, maxBoost);
+                s.vx = (s.vx / spd) * newSpd;
+                s.vy = (s.vy / spd) * newSpd;
+            }
+        });
+    }
+
+    // ── Loop de animación principal (requestAnimationFrame) ───────────────
+    function loop(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05); // cap 50ms
+        lastTime = now;
+
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+
+        // Beat simulado: cada BEAT_MS ms mientras reproduce
+        if (playing && now - lastBeatTime >= BEAT_MS) {
+            lastBeatTime = now;
+            onBeat();
+        }
+
+        stickers.forEach(s => {
+            // ── Lerp de velocidad hacia el target según estado ──
+            const targetSpd = playing ? PLAY_SPEED : IDLE_SPEED;
+            const curSpd    = Math.hypot(s.vx, s.vy);
+            if (curSpd > 0) {
+                const lerp   = 1 - Math.pow(0.05, dt);
+                const newSpd = curSpd + (targetSpd - curSpd) * lerp;
+                s.vx = (s.vx / curSpd) * newSpd;
+                s.vy = (s.vy / curSpd) * newSpd;
+            }
+
+            // ── Mover ──
+            s.x += s.vx * dt;
+            s.y += s.vy * dt;
+
+            // ── Decaída del pulso (rápida: ~0.25s) ──
+            s.pulse *= Math.pow(0.001, dt);
+            const scale   = 1 + s.pulse * 0.5;           // hasta 1.5× en el pico
+            const visSize = s.size * scale;
+
+            // ── Rebote en paredes ──
+            let bounced = false;
+            if (s.x < 0) {
+                s.x = 0; s.vx = Math.abs(s.vx); bounced = true;
+            } else if (s.x + visSize > W) {
+                s.x = W - visSize; s.vx = -Math.abs(s.vx); bounced = true;
+            }
+            if (s.y < 0) {
+                s.y = 0; s.vy = Math.abs(s.vy); bounced = true;
+            } else if (s.y + visSize > H) {
+                s.y = H - visSize; s.vy = -Math.abs(s.vy); bounced = true;
+            }
+
+            // Al rebotar: cambiar color y mini-pulso (como el logo de DVD)
+            if (bounced) {
+                s.hue   = (s.hue + Math.floor(rnd(50, 130))) % 360;
+                s.pulse = Math.max(s.pulse, 0.45);
+            }
+
+            // ── Aplicar al DOM: solo transform + filter (sin reflow) ──
+            const glow  = 2  + s.pulse * 20;
+            const alpha = 0.15 + s.pulse * 0.85;
+            s.el.style.width     = `${s.size}px`;
+            s.el.style.height    = `${s.size}px`;
+            s.el.style.transform = `translate(${s.x}px, ${s.y}px) scale(${scale.toFixed(3)})`;
+            s.el.style.filter    =
+                `hue-rotate(${s.hue}deg) ` +
+                `drop-shadow(0 0 ${glow.toFixed(1)}px rgba(255,255,255,${alpha.toFixed(2)}))`;
+        });
+
+        rafId = requestAnimationFrame(loop);
+    }
+
+    // ── API pública ───────────────────────────────────────────────────────
+    async function init() {
+        await loadGifs();
+        if (gifUrls.length === 0) {
+            console.warn('[Stickers] Sin GIFs disponibles, sistema desactivado');
+            return;
+        }
+        createOverlay();
+        for (let i = 0; i < COUNT; i++) {
+            stickers.push(makeSticker(pick(gifUrls)));
+        }
+        lastTime = performance.now();
+        rafId    = requestAnimationFrame(loop);
+        console.log(`[Stickers] ${COUNT} stickers activos (${gifUrls.length} GIFs)`);
+    }
+
+    // Llamar cuando cambia el estado playing/stopped
+    function setPlaying(isPlaying) {
+        if (isPlaying === playing) return;
+        playing = isPlaying;
+        if (isPlaying) {
+            lastBeatTime = performance.now();
+            onBeat(); // beat inmediato al arrancar
+        }
+    }
+
+    return { init, setPlaying };
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Init] Iniciando...');
 
@@ -223,6 +403,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Intentar conectar
     await tryConnect();
+
+    // Iniciar stickers (no bloqueante, carga GIFs en background)
+    StickersSystem.init();
 
     // Reintentar cargar config cada 10 segundos si no está conectado
     setInterval(async () => {
@@ -518,6 +701,9 @@ function updateNowPlaying(song) {
         elements.statusIndicator.classList.add(song.status === 'playing' ? 'playing' : 'stopped');
     }
     
+    // Sincronizar stickers con estado de reproducción
+    StickersSystem.setPlaying(song.status === 'playing');
+
     // Actualizar estado de botones
     updateButtonStates();
 }
