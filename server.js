@@ -687,67 +687,64 @@ app.post('/api/play', async (req, res) => {
           });
         }
       } else {
-        // Agregar todos a la cola
-        info.entries.forEach(entry => {
-          queue.push({
-            url: entry.url,
-            title: entry.title,
-            addedAt: Date.now()
+        // Hay algo sonando: interrumpir, reproducir el primero y meter el resto al frente de la cola
+        const firstVideo = info.entries[0];
+        if (!firstVideo || !firstVideo.url) {
+          return res.status(400).json({ error: 'Primer video de playlist inválido' });
+        }
+
+        stopCurrentPlayback(true, true);
+
+        // Meter el resto de la playlist al FRENTE de la cola (antes de lo que ya había)
+        const newEntries = info.entries.slice(1)
+          .filter(e => e && e.url)
+          .map(e => ({ url: e.url, title: e.title || 'Desconocido', addedAt: Date.now() }));
+        queue.unshift(...newEntries);
+
+        try {
+          await playWithMPV(firstVideo.url, savedAudioDevice, firstVideo.title || 'Video 1');
+          res.json({
+            success: true,
+            message: `Reproduciendo playlist: ${info.entries.length} canciones`,
+            queue: queue.length
           });
-        });
-        
-        broadcastStatus();
-        res.json({ 
-          success: true, 
-          message: `Playlist agregada: ${info.entries.length} canciones`,
-          queue: queue.length
-        });
+        } catch (error) {
+          console.error('[Playlist Error]', error.message);
+          res.status(500).json({ error: 'Error al reproducir playlist', details: error.message });
+        }
       }
     } else {
       // Es un solo video
       const videoTitle = info?.title || 'Desconocido';
       
+      // Siempre interrumpir lo actual y reproducir inmediatamente
       if (currentSong.status === 'playing') {
-        // Agregar a la cola
-        queue.push({
-          url: playUrl,
-          title: videoTitle,
-          addedAt: Date.now()
-        });
-        console.log(`[Queue] Video agregado: ${videoTitle}`);
-        broadcastStatus();
-        res.json({ 
-          success: true, 
-          message: 'Canción agregada a la cola',
-          queue: queue.length
-        });
-      } else {
-        // Reproducir inmediatamente (sin setTimeout)
-        stopCurrentPlayback(true, true); // skipBroadcast=true, isManualStop=true (evitar auto-play)
+        console.log(`[Play] Interrumpiendo reproduccion actual -> ${videoTitle}`);
+      }
+      stopCurrentPlayback(true, true);
 
-        try {
-          console.log(`[Play] Reproduciendo: ${videoTitle}`);
-          const mpvStart = Date.now();
-          await playWithMPV(playUrl, savedAudioDevice, videoTitle);
-          const mpvTime = Date.now() - mpvStart;
-          const totalTime = Date.now() - startTime;
-          console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
-          
-          res.json({ 
-            success: true, 
-            message: 'Reproducción iniciada',
-            song: {
-              url: url,
-              title: videoTitle
-            }
-          });
-        } catch (error) {
-          console.error('[Play Error]', error.message);
-          res.status(500).json({ 
-            error: 'Error al iniciar reproducción', 
-            details: error.message 
-          });
-        }
+      try {
+        console.log(`[Play] Reproduciendo: ${videoTitle}`);
+        const mpvStart = Date.now();
+        await playWithMPV(playUrl, savedAudioDevice, videoTitle);
+        const mpvTime = Date.now() - mpvStart;
+        const totalTime = Date.now() - startTime;
+        console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
+
+        res.json({
+          success: true,
+          message: 'Reproducción iniciada',
+          song: {
+            url: url,
+            title: videoTitle
+          }
+        });
+      } catch (error) {
+        console.error('[Play Error]', error.message);
+        res.status(500).json({
+          error: 'Error al iniciar reproducción',
+          details: error.message
+        });
       }
     }
   } catch (error) {
