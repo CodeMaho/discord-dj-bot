@@ -6,7 +6,6 @@ const https = require('https');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const readline = require('readline');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 
 const app = express();
@@ -82,6 +81,140 @@ async function getVideoInfoWithArgs(url) {
   const entries = lines.map(l => JSON.parse(l));
   return { entries, _type: 'playlist' };
 }
+
+// ===== SOPORTE PARA SUNO.COM =====
+
+function isSunoUrl(url) {
+  return /suno\.com\/song\/[0-9a-f-]+/i.test(url);
+}
+
+// Fetch simple de una página HTTPS usando el módulo https ya importado
+function fetchPageHtml(pageUrl) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(pageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    }, (res) => {
+      // Seguir redirecciones
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchPageHtml(res.headers.location).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => {
+      req.destroy();
+      reject(new Error('Timeout al cargar página de Suno'));
+    });
+  });
+}
+
+async function getSunoInfo(url) {
+  const match = url.match(/suno\.com\/song\/([0-9a-f-]+)/i);
+  if (!match) throw new Error('URL de Suno inválida');
+
+  const songId = match[1];
+  const audioUrl = `https://cdn1.suno.ai/${songId}.mp3`;
+  let title = `Suno ${songId.substring(0, 8)}`;
+
+  try {
+    const html = await fetchPageHtml(`https://suno.com/song/${songId}`);
+    // Buscar og:title primero
+    const ogMatch = html.match(/property="og:title"\s+content="([^"]+)"/i) ||
+                    html.match(/content="([^"]+)"\s+property="og:title"/i);
+    if (ogMatch) {
+      title = ogMatch[1].replace(/\s*[|–\-]\s*Suno.*$/i, '').trim();
+    } else {
+      // Fallback a <title>
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (titleMatch) title = titleMatch[1].replace(/\s*[|–\-]\s*Suno.*$/i, '').trim();
+    }
+  } catch (e) {
+    console.log('[Suno] No se pudo obtener título, usando ID:', e.message);
+  }
+
+  console.log(`[Suno] ID: ${songId} | Título: "${title}" | Audio: ${audioUrl}`);
+  return { title, audioUrl, duration: 0 };
+}
+
+// Extrae el ID de un vídeo de YouTube desde cualquier formato de URL
+function extractYouTubeVideoId(url) {
+  const match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/)
+    || url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : null;
+}
+
+// Obtiene hasta 25 canciones del mix automático de YouTube para un vídeo
+async function getYouTubeMix(videoId) {
+  const mixUrl = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
+  console.log(`[Mix] Obteniendo mix: ${mixUrl}`);
+  const args = [
+    '--js-runtimes', 'node',
+    '--dump-json',
+    '--no-download',
+    '--flat-playlist',
+    '--playlist-end', '25',
+    mixUrl
+  ];
+  const output = await ytDlpWrap.execPromise(args);
+  const lines = output.trim().split('\n').filter(l => l.trim());
+  return lines.map(l => JSON.parse(l));
+}
+
+// Detecta si el input es una URL válida o texto libre
+function isUrl(input) {
+  return /^https?:\/\//i.test(input) || /^www\./i.test(input);
+}
+
+// Busca en YouTube el resultado más relevante para una consulta de texto
+async function searchYouTube(query) {
+  console.log(`[YT Search] Buscando: "${query}"`);
+  const args = [
+    '--js-runtimes', 'node',
+    '--dump-json',
+    '--no-download',
+    '--flat-playlist',
+    `ytsearch1:${query}`
+  ];
+  const output = await ytDlpWrap.execPromise(args);
+  const lines = output.trim().split('\n').filter(l => l.trim());
+  if (lines.length === 0) throw new Error('No se encontraron resultados en YouTube');
+
+  const result = JSON.parse(lines[0]);
+  const videoUrl = result.webpage_url
+    || result.url
+    || (result.id ? `https://www.youtube.com/watch?v=${result.id}` : null);
+
+  if (!videoUrl) throw new Error('Resultado de búsqueda sin URL válida');
+
+  console.log(`[YT Search] ✅ Encontrado: "${result.title}" → ${videoUrl}`);
+  return {
+    info: { title: result.title, duration: result.duration || 0 },
+    playUrl: videoUrl
+  };
+}
+
+// Resuelve cualquier input y devuelve { info, playUrl }
+// - Suno URL:     bypasa yt-dlp, playUrl = CDN MP3 directo
+// - YouTube URL:  usa yt-dlp, playUrl = url original
+// - Texto libre:  busca en YouTube el resultado más relevante
+async function resolveTrackInfo(input) {
+  if (isSunoUrl(input)) {
+    const suno = await getSunoInfo(input);
+    return {
+      info: { title: suno.title, duration: 0 },
+      playUrl: suno.audioUrl
+    };
+  }
+  if (!isUrl(input)) {
+    return await searchYouTube(input);
+  }
+  const info = await getVideoInfoWithArgs(input);
+  return { info, playUrl: input };
+}
+
+// ===== FIN SOPORTE SUNO =====
 
 // Estado global
 let currentProcess = null;
@@ -488,12 +621,12 @@ app.post('/api/play', async (req, res) => {
     console.log('[Play] INICIO - Obteniendo información del video (max 30s)...');
     const infoStart = Date.now();
 
-    const getInfoPromise = getVideoInfoWithArgs(url);
+    const getInfoPromise = resolveTrackInfo(url);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout: YouTube tardó más de 30s (bloqueado o conexión lenta)')), 30000)
+      setTimeout(() => reject(new Error('Timeout: la fuente tardó más de 30s')), 30000)
     );
-    
-    const info = await Promise.race([getInfoPromise, timeoutPromise]);
+
+    const { info, playUrl } = await Promise.race([getInfoPromise, timeoutPromise]);
     const infoTime = Date.now() - infoStart;
     console.log(`[Play] ✅ Info obtenida en ${infoTime}ms`);
     
@@ -577,7 +710,7 @@ app.post('/api/play', async (req, res) => {
       if (currentSong.status === 'playing') {
         // Agregar a la cola
         queue.push({
-          url: url,
+          url: playUrl,
           title: videoTitle,
           addedAt: Date.now()
         });
@@ -595,7 +728,7 @@ app.post('/api/play', async (req, res) => {
         try {
           console.log(`[Play] Reproduciendo: ${videoTitle}`);
           const mpvStart = Date.now();
-          await playWithMPV(url, savedAudioDevice, videoTitle);
+          await playWithMPV(playUrl, savedAudioDevice, videoTitle);
           const mpvTime = Date.now() - mpvStart;
           const totalTime = Date.now() - startTime;
           console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
@@ -622,6 +755,87 @@ app.post('/api/play', async (req, res) => {
       error: 'Error al procesar URL', 
       details: error.message 
     });
+  }
+});
+
+// POST: Reproducir canción + generar playlist de mix automático en la cola
+app.post('/api/play-with-mix', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL o búsqueda requerida' });
+
+  try {
+    // 1. Resolver el input (texto de búsqueda, URL de YouTube o Suno)
+    console.log('[Mix] Resolviendo input:', url);
+    const { info: baseInfo, playUrl: basePlayUrl } = await resolveTrackInfo(url);
+    console.log(`[Mix] Base: "${baseInfo.title}" → ${basePlayUrl}`);
+
+    // 2. Intentar extraer el video ID para construir el mix de YouTube
+    const videoId = extractYouTubeVideoId(basePlayUrl);
+
+    if (!videoId) {
+      // No es YouTube (ej: Suno) → reproducir solo sin mix
+      console.log('[Mix] No es un vídeo de YouTube, reproduciendo sin mix');
+      stopCurrentPlayback(true, true);
+      await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+      return res.json({
+        success: true,
+        message: `Reproduciendo "${baseInfo.title}" (mix no disponible para esta fuente)`,
+        mixSize: 0
+      });
+    }
+
+    // 3. Obtener el mix automático de YouTube (máx 25 canciones)
+    let mixEntries = [];
+    try {
+      mixEntries = await getYouTubeMix(videoId);
+      console.log(`[Mix] ${mixEntries.length} canciones obtenidas del mix`);
+    } catch (mixError) {
+      console.log('[Mix] No se pudo obtener el mix:', mixError.message);
+    }
+
+    // 4. Detener lo que haya, reproducir primera canción y encolar el resto
+    stopCurrentPlayback(true, true);
+
+    if (mixEntries.length > 0) {
+      const first = mixEntries[0];
+      const firstUrl = first.webpage_url
+        || first.url
+        || (first.id ? `https://www.youtube.com/watch?v=${first.id}` : null);
+      const firstTitle = first.title || baseInfo.title;
+
+      if (!firstUrl) throw new Error('Primera entrada del mix sin URL válida');
+
+      // Añadir el resto a la cola
+      for (let i = 1; i < mixEntries.length; i++) {
+        const entry = mixEntries[i];
+        const entryUrl = entry.webpage_url
+          || entry.url
+          || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : null);
+        if (entryUrl) {
+          queue.push({ url: entryUrl, title: entry.title || `Canción ${i}`, addedAt: Date.now() });
+        }
+      }
+
+      await playWithMPV(firstUrl, savedAudioDevice, firstTitle);
+
+      res.json({
+        success: true,
+        message: `Reproduciendo "${firstTitle}" + ${queue.length} canciones en cola`,
+        mixSize: mixEntries.length
+      });
+    } else {
+      // Sin mix disponible: reproducir la canción base directamente
+      await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+      res.json({
+        success: true,
+        message: `Reproduciendo "${baseInfo.title}" (no se encontró mix relacionado)`,
+        mixSize: 0
+      });
+    }
+
+  } catch (error) {
+    console.error('[Mix] Error:', error.message);
+    res.status(500).json({ error: 'Error al crear la playlist', details: error.message });
   }
 });
 
@@ -676,10 +890,10 @@ app.post('/api/queue', async (req, res) => {
 
   try {
     console.log('[Queue Add] Obteniendo info del video...');
-    const info = await getVideoInfoWithArgs(url);
+    const { info, playUrl } = await resolveTrackInfo(url);
 
     if (info.entries && info.entries.length > 1) {
-      // Es una playlist
+      // Es una playlist (solo YouTube)
       info.entries.forEach(entry => {
         if (entry && entry.url) {
           queue.push({
@@ -696,9 +910,9 @@ app.post('/api/queue', async (req, res) => {
         queueLength: queue.length
       });
     } else {
-      // Video único
+      // Video/canción única
       queue.push({
-        url: url,
+        url: playUrl,
         title: info?.title || 'Desconocido',
         addedAt: Date.now()
       });
@@ -993,59 +1207,62 @@ setInterval(() => {
 }, 500);
 
 // ===== CONFIGURACIÓN INTERACTIVA AL INICIO =====
-async function selectAudioDeviceInteractive() {
-  // Cargar dispositivos
-  await loadAudioDevices();
+async function selectCableInputDevice() {
+  console.log('\n[Audio] Buscando dispositivo CABLE Input (VB-Audio)...');
 
-  if (cachedAudioDevices.length === 0) {
-    console.log('[Audio] No se encontraron dispositivos. Usando configuración guardada.');
-    return savedAudioDevice;
+  let devices = [];
+  try {
+    devices = await loadAudioDevices();
+  } catch (err) {
+    console.error('\n╔════════════════════════════════════════════════════════════╗');
+    console.error('║  ❌ ERROR: No se pudo listar dispositivos de audio         ║');
+    console.error('╠════════════════════════════════════════════════════════════╣');
+    console.error('║  MPV no está instalado o no se encuentra en el PATH.      ║');
+    console.error('║  Instala MPV con: winget install mpv                      ║');
+    console.error('╚════════════════════════════════════════════════════════════╝');
+    process.exit(1);
   }
 
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║  🔊 SELECCIONA EL DISPOSITIVO DE AUDIO                     ║');
-  console.log('╠════════════════════════════════════════════════════════════╣');
+  if (devices.length === 0) {
+    console.error('\n╔════════════════════════════════════════════════════════════╗');
+    console.error('║  ❌ ERROR: MPV no pudo listar dispositivos de audio        ║');
+    console.error('╠════════════════════════════════════════════════════════════╣');
+    console.error('║  Posibles causas:                                         ║');
+    console.error('║    - MPV no está instalado correctamente                  ║');
+    console.error('║    - No hay dispositivos de audio en el sistema           ║');
+    console.error('║  Solución: ejecuta INSTALL.bat o winget install mpv       ║');
+    console.error('╚════════════════════════════════════════════════════════════╝');
+    process.exit(1);
+  }
 
-  // Mostrar dispositivos con números
-  cachedAudioDevices.forEach((device, index) => {
-    const isCable = device.name.toLowerCase().includes('cable');
-    const isSelected = device.id === savedAudioDevice;
-    const marker = isSelected ? ' ✓' : (isCable ? ' ⭐' : '');
-    console.log(`║  [${(index + 1).toString().padStart(2)}] ${device.name.substring(0, 45).padEnd(45)}${marker} ║`);
-  });
+  // Buscar primero "cable input" (match exacto), luego cualquier "cable"
+  const cableDevice = devices.find(d => d.name.toLowerCase().includes('cable input'))
+                   || devices.find(d => d.name.toLowerCase().includes('cable'));
 
-  console.log('╠════════════════════════════════════════════════════════════╣');
-  console.log('║  [0] Usar dispositivo guardado anteriormente               ║');
-  console.log('╚════════════════════════════════════════════════════════════╝');
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  return new Promise((resolve) => {
-    rl.question('\nSelecciona un número: ', (answer) => {
-      rl.close();
-
-      const num = parseInt(answer);
-
-      if (num === 0 || isNaN(num)) {
-        console.log(`[Audio] Usando dispositivo guardado: ${savedAudioDevice || '(ninguno)'}`);
-        resolve(savedAudioDevice);
-      } else if (num >= 1 && num <= cachedAudioDevices.length) {
-        const selected = cachedAudioDevices[num - 1];
-        savedAudioDevice = selected.id;
-        serverConfig.audioDevice = selected.id;
-        saveServerConfig();
-        saveState();
-        console.log(`[Audio] ✅ Seleccionado: ${selected.name}`);
-        resolve(selected.id);
-      } else {
-        console.log('[Audio] Número inválido, usando dispositivo guardado.');
-        resolve(savedAudioDevice);
-      }
+  if (!cableDevice) {
+    console.error('\n╔════════════════════════════════════════════════════════════╗');
+    console.error('║  ❌ ERROR: CABLE Input (VB-Audio) no encontrado            ║');
+    console.error('╠════════════════════════════════════════════════════════════╣');
+    console.error('║  Dispositivos de audio detectados:                        ║');
+    devices.forEach(d => {
+      const name = d.name.substring(0, 50).padEnd(50);
+      console.error(`║    · ${name} ║`);
     });
-  });
+    console.error('╠════════════════════════════════════════════════════════════╣');
+    console.error('║  VB-Audio Virtual Cable no está instalado.                ║');
+    console.error('║  Descarga e instala desde: https://vb-audio.com/Cable/   ║');
+    console.error('║  Tras instalarlo, reinicia el PC y vuelve a iniciar.     ║');
+    console.error('╚════════════════════════════════════════════════════════════╝');
+    process.exit(1);
+  }
+
+  savedAudioDevice = cableDevice.id;
+  serverConfig.audioDevice = cableDevice.id;
+  saveServerConfig();
+  saveState();
+
+  console.log(`[Audio] ✅ Dispositivo seleccionado: ${cableDevice.name}`);
+  return cableDevice.id;
 }
 
 // Iniciar servidor (HTTP + WebSocket en el mismo puerto)
@@ -1059,8 +1276,8 @@ server.listen(PORT, '0.0.0.0', async () => {
 ╚════════════════════════════════════════════════════════════╝
   `);
 
-  // 1. Seleccionar dispositivo de audio
-  await selectAudioDeviceInteractive();
+  // 1. Seleccionar CABLE Input automáticamente
+  await selectCableInputDevice();
 
   // 2. Iniciar cloudflared
   console.log('\n[Startup] Iniciando túnel de Cloudflare...');
