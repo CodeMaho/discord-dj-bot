@@ -84,12 +84,12 @@
                 
                 <!-- URL Input -->
                 <div class="input-group">
-                    <label for="urlInput">URL de YouTube</label>
+                    <label for="urlInput">Canción, artista o URL</label>
                     <div class="input-with-button">
-                        <input 
-                            type="text" 
-                            id="urlInput" 
-                            placeholder="https://www.youtube.com/watch?v=..."
+                        <input
+                            type="text"
+                            id="urlInput"
+                            placeholder="Ej: Bohemian Rhapsody, url de YouTube, Suno..."
                             autocomplete="off"
                         >
                         <button class="btn btn-icon" id="clearBtn" title="Limpiar">
@@ -97,7 +97,7 @@
                         </button>
                     </div>
                     <div class="input-hint">
-                        Pega el enlace completo de YouTube, playlists también funcionan
+                        Escribe el nombre de una canción, artista o pega una URL de YouTube o Suno
                     </div>
                 </div>
 
@@ -110,6 +110,10 @@
                     <button class="btn btn-secondary" id="addQueueBtn">
                         <span class="btn-icon">➕</span>
                         Añadir a Cola
+                    </button>
+                    <button class="btn btn-accent" id="createPlaylistBtn">
+                        <span class="btn-icon">🎲</span>
+                        Crear Playlist
                     </button>
                     <button class="btn btn-secondary" id="stopBtn">
                         <span class="btn-icon">⏹️</span>
@@ -169,8 +173,8 @@
                 <h3>📋 Instrucciones</h3>
                 <ol>
                     <li>
-                        <strong>Pega el enlace:</strong>
-                        Copia la URL de cualquier video o playlist de YouTube
+                        <strong>Busca o pega:</strong>
+                        Escribe el nombre de una canción o artista, o pega una URL de YouTube / Suno
                     </li>
                     <li>
                         <strong>Reproduce:</strong>
