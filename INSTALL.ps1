@@ -7,27 +7,69 @@ $Host.UI.RawUI.WindowTitle = "Discord DJ Bot - Instalador"
 
 # Colores
 function Write-Step { param($msg) Write-Host "`n[$script:step] $msg" -ForegroundColor Cyan; $script:step++ }
-function Write-OK { param($msg) Write-Host "    [OK] $msg" -ForegroundColor Green }
-function Write-Warn { param($msg) Write-Host "    [!] $msg" -ForegroundColor Yellow }
-function Write-Err { param($msg) Write-Host "    [X] $msg" -ForegroundColor Red }
+function Write-OK   { param($msg) Write-Host "    [OK] $msg" -ForegroundColor Green }
+function Write-Warn { param($msg) Write-Host "    [!]  $msg" -ForegroundColor Yellow }
+function Write-Err  { param($msg) Write-Host "    [X]  $msg" -ForegroundColor Red }
 function Write-Info { param($msg) Write-Host "    $msg" -ForegroundColor White }
 
 $script:step = 1
 $projectDir = $PSScriptRoot
 
+# ============================================
+# HELPERS DE PATH
+# ============================================
+
+# Recarga $env:Path desde el registro (Machine + User) en la sesion actual
+function Refresh-EnvPath {
+    $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $user    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machine;$user"
+}
+
+# Añade un directorio al PATH del usuario de forma permanente y recarga la sesion
+function Add-ToUserPath {
+    param([string]$Dir)
+    if ([string]::IsNullOrWhiteSpace($Dir)) { return }
+    $Dir = $Dir.TrimEnd('\')
+    $current = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $entries = $current -split ';' | Where-Object { $_ -ne '' }
+    if ($entries -notcontains $Dir) {
+        $newPath = ($entries + $Dir) -join ';'
+        [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        Refresh-EnvPath
+        Write-OK "Añadido al PATH de usuario permanentemente: $Dir"
+        return $true
+    }
+    return $false  # ya estaba
+}
+
+# Busca un ejecutable en rutas con wildcards y devuelve el primero encontrado
+function Find-Exe {
+    param([string[]]$Patterns)
+    foreach ($pattern in $Patterns) {
+        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { return $found }
+    }
+    return $null
+}
+
+# ============================================
+# INICIO
+# ============================================
+
 Clear-Host
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "   DISCORD DJ BOT - INSTALADOR        " -ForegroundColor Magenta
+Write-Host "   DISCORD DJ BOT - INSTALADOR        "  -ForegroundColor Magenta
 Write-Host "========================================" -ForegroundColor Magenta
 Write-Host ""
 Write-Host "Este script instalara todo lo necesario:" -ForegroundColor White
-Write-Host "  - Node.js (servidor)" -ForegroundColor Gray
-Write-Host "  - MPV (reproductor de audio)" -ForegroundColor Gray
-Write-Host "  - yt-dlp (extractor de YouTube)" -ForegroundColor Gray
+Write-Host "  - Node.js (servidor)"                  -ForegroundColor Gray
+Write-Host "  - MPV (reproductor de audio)"          -ForegroundColor Gray
+Write-Host "  - yt-dlp (extractor de YouTube)"       -ForegroundColor Gray
 Write-Host "  - Cloudflared (tunel para acceso remoto)" -ForegroundColor Gray
 Write-Host "  - VB-Audio Virtual Cable (audio virtual)" -ForegroundColor Gray
-Write-Host "  - Dependencias npm" -ForegroundColor Gray
+Write-Host "  - Dependencias npm"                    -ForegroundColor Gray
 Write-Host ""
 Write-Host "Presiona ENTER para continuar o CTRL+C para cancelar..." -ForegroundColor Yellow
 Read-Host
@@ -52,20 +94,30 @@ if (Get-Command winget -ErrorAction SilentlyContinue) {
 # ============================================
 Write-Step "Verificando Node.js..."
 
+Refresh-EnvPath
 if (Get-Command node -ErrorAction SilentlyContinue) {
     $nodeVersion = node --version
     Write-OK "Node.js instalado: $nodeVersion"
 } else {
-    Write-Warn "Node.js no encontrado. Instalando..."
+    Write-Warn "Node.js no encontrado. Instalando via winget..."
     winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
-
-    # Actualizar PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    Refresh-EnvPath
 
     if (Get-Command node -ErrorAction SilentlyContinue) {
-        Write-OK "Node.js instalado correctamente"
+        Write-OK "Node.js instalado: $(node --version)"
     } else {
-        Write-Err "Error instalando Node.js. Intenta reiniciar el script."
+        # Buscar en rutas tipicas de winget
+        $nodeExe = Find-Exe @(
+            "$env:ProgramFiles\nodejs\node.exe",
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*NodeJS*\node.exe"
+        )
+        if ($nodeExe) {
+            Add-ToUserPath -Dir $nodeExe.DirectoryName
+            Write-OK "Node.js encontrado y añadido al PATH: $($nodeExe.FullName)"
+        } else {
+            Write-Err "Node.js no pudo instalarse automaticamente."
+            Write-Info "Descargalo de: https://nodejs.org/"
+        }
     }
 }
 
@@ -74,42 +126,67 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 # ============================================
 Write-Step "Verificando MPV (reproductor multimedia)..."
 
-$mpvPaths = @(
-    "mpv",
-    "$projectDir\mpv.exe",
-    "$projectDir\mpv-x86_64-*\mpv.exe",
-    "C:\Program Files\mpv\mpv.exe",
-    "C:\mpv\mpv.exe"
-)
+Refresh-EnvPath
+$mpvExe = $null
 
-$mpvFound = $false
-foreach ($path in $mpvPaths) {
-    $resolved = Resolve-Path $path -ErrorAction SilentlyContinue
-    if ($resolved) {
-        $mpvFound = $true
-        Write-OK "MPV encontrado: $resolved"
-        break
+# Paso 1: comprobar si ya esta en PATH
+if (Get-Command mpv -ErrorAction SilentlyContinue) {
+    $mpvExe = (Get-Command mpv).Source
+    Write-OK "MPV ya disponible en PATH: $mpvExe"
+}
+
+# Paso 2: buscar build portable en la carpeta del proyecto (mpv-x86_64-*)
+if (-not $mpvExe) {
+    $localMpv = Find-Exe @("$projectDir\mpv-x86_64-*\mpv.exe", "$projectDir\mpv\mpv.exe")
+    if ($localMpv) {
+        $mpvExe = $localMpv.FullName
+        Write-OK "MPV portable encontrado localmente: $mpvExe"
+        Add-ToUserPath -Dir $localMpv.DirectoryName
     }
 }
 
-if (-not $mpvFound) {
-    if (Get-Command mpv -ErrorAction SilentlyContinue) {
-        $mpvFound = $true
-        Write-OK "MPV encontrado en PATH"
+# Paso 3: buscar en rutas de instalacion comunes
+if (-not $mpvExe) {
+    $commonMpv = Find-Exe @(
+        "C:\Program Files\mpv\mpv.exe",
+        "C:\mpv\mpv.exe",
+        "$env:LOCALAPPDATA\Programs\mpv\mpv.exe",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe"
+    )
+    if ($commonMpv) {
+        $mpvExe = $commonMpv.FullName
+        Write-OK "MPV encontrado en: $mpvExe"
+        Add-ToUserPath -Dir $commonMpv.DirectoryName
     }
 }
 
-if (-not $mpvFound) {
-    Write-Warn "MPV no encontrado. Instalando..."
-    winget install mpv.net --accept-source-agreements --accept-package-agreements
+# Paso 4: instalar via winget como ultimo recurso
+if (-not $mpvExe) {
+    Write-Warn "MPV no encontrado localmente. Instalando via winget..."
 
-    # Actualizar PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    winget install mpv --accept-source-agreements --accept-package-agreements
+    Refresh-EnvPath
 
+    # Verificar tras instalacion
     if (Get-Command mpv -ErrorAction SilentlyContinue) {
-        Write-OK "MPV instalado correctamente"
+        $mpvExe = (Get-Command mpv).Source
+        Write-OK "MPV instalado y disponible: $mpvExe"
     } else {
-        Write-Warn "MPV instalado pero puede requerir reiniciar la terminal"
+        # Buscar el exe en paquetes winget
+        $wingetMpv = Find-Exe @(
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe",
+            "$env:ProgramFiles\mpv\mpv.exe",
+            "$env:ProgramFiles (x86)\mpv\mpv.exe"
+        )
+        if ($wingetMpv) {
+            $mpvExe = $wingetMpv.FullName
+            Add-ToUserPath -Dir $wingetMpv.DirectoryName
+            Write-OK "MPV encontrado tras instalacion: $mpvExe"
+        } else {
+            Write-Err "No se pudo instalar MPV automaticamente."
+            Write-Info "Descarga manual: https://mpv.io/installation/"
+            Write-Info "Extrae el ZIP en '$projectDir\mpv\' y vuelve a ejecutar el instalador."
+        }
     }
 }
 
@@ -118,20 +195,27 @@ if (-not $mpvFound) {
 # ============================================
 Write-Step "Verificando yt-dlp (extractor de YouTube)..."
 
+Refresh-EnvPath
 if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
-    $ytdlpVersion = yt-dlp --version
-    Write-OK "yt-dlp instalado: $ytdlpVersion"
+    Write-OK "yt-dlp instalado: $(yt-dlp --version)"
 } else {
-    Write-Warn "yt-dlp no encontrado. Instalando..."
+    Write-Warn "yt-dlp no encontrado. Instalando via winget..."
     winget install yt-dlp.yt-dlp --accept-source-agreements --accept-package-agreements
-
-    # Actualizar PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    Refresh-EnvPath
 
     if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
-        Write-OK "yt-dlp instalado correctamente"
+        Write-OK "yt-dlp instalado: $(yt-dlp --version)"
     } else {
-        Write-Warn "yt-dlp instalado pero puede requerir reiniciar la terminal"
+        $ytdlpExe = Find-Exe @(
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*yt-dlp*\yt-dlp.exe",
+            "$env:ProgramFiles\yt-dlp\yt-dlp.exe"
+        )
+        if ($ytdlpExe) {
+            Add-ToUserPath -Dir $ytdlpExe.DirectoryName
+            Write-OK "yt-dlp encontrado y añadido al PATH: $($ytdlpExe.FullName)"
+        } else {
+            Write-Warn "yt-dlp instalado pero requiere reiniciar la terminal para activarse."
+        }
     }
 }
 
@@ -140,39 +224,46 @@ if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
 # ============================================
 Write-Step "Verificando Cloudflared (tunel de acceso remoto)..."
 
-$cloudflaredPaths = @(
-    "cloudflared",
-    "C:\Program Files (x86)\cloudflared\cloudflared.exe",
-    "C:\Program Files\cloudflared\cloudflared.exe"
-)
+Refresh-EnvPath
+$cloudflaredExe = $null
 
-$cloudflaredFound = $false
-$cloudflaredPath = ""
-
-foreach ($path in $cloudflaredPaths) {
-    if ($path -eq "cloudflared") {
-        if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
-            $cloudflaredFound = $true
-            $cloudflaredPath = (Get-Command cloudflared).Source
-            break
-        }
-    } elseif (Test-Path $path) {
-        $cloudflaredFound = $true
-        $cloudflaredPath = $path
-        break
+if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
+    $cloudflaredExe = (Get-Command cloudflared).Source
+    Write-OK "Cloudflared disponible en PATH: $cloudflaredExe"
+} else {
+    $cloudflaredExe = Find-Exe @(
+        "C:\Program Files (x86)\cloudflared\cloudflared.exe",
+        "C:\Program Files\cloudflared\cloudflared.exe",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*cloudflared*\cloudflared.exe"
+    )
+    if ($cloudflaredExe) {
+        Write-OK "Cloudflared encontrado: $($cloudflaredExe.FullName)"
+        Add-ToUserPath -Dir $cloudflaredExe.DirectoryName
     }
 }
 
-if ($cloudflaredFound) {
-    Write-OK "Cloudflared encontrado: $cloudflaredPath"
-} else {
-    Write-Warn "Cloudflared no encontrado. Instalando..."
+if (-not $cloudflaredExe) {
+    Write-Warn "Cloudflared no encontrado. Instalando via winget..."
     winget install Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements
+    Refresh-EnvPath
 
-    # Actualizar PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-
-    Write-OK "Cloudflared instalado"
+    if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
+        $cloudflaredExe = (Get-Command cloudflared).Source
+        Write-OK "Cloudflared instalado: $cloudflaredExe"
+    } else {
+        $cfExe = Find-Exe @(
+            "C:\Program Files (x86)\cloudflared\cloudflared.exe",
+            "C:\Program Files\cloudflared\cloudflared.exe",
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*cloudflared*\cloudflared.exe"
+        )
+        if ($cfExe) {
+            Add-ToUserPath -Dir $cfExe.DirectoryName
+            $cloudflaredExe = $cfExe.FullName
+            Write-OK "Cloudflared encontrado y añadido al PATH: $cloudflaredExe"
+        } else {
+            Write-Warn "Cloudflared instalado pero requiere reiniciar la terminal para activarse."
+        }
+    }
 }
 
 # ============================================
@@ -180,7 +271,6 @@ if ($cloudflaredFound) {
 # ============================================
 Write-Step "Verificando VB-Audio Virtual Cable..."
 
-# Buscar si CABLE Input existe como dispositivo de audio
 $cableInstalled = $false
 try {
     $audioDevices = Get-WmiObject Win32_SoundDevice | Select-Object -ExpandProperty Name
@@ -201,6 +291,18 @@ if (-not $cableInstalled) {
                 break
             }
         }
+    }
+}
+
+# Alternativa: buscar driver instalado en el proyecto
+if (-not $cableInstalled) {
+    $vbDriver = Find-Exe @("$projectDir\VBCABLE_Driver*\VBCABLE_Setup_x64.exe")
+    if ($vbDriver) {
+        Write-Warn "VB-Cable NO detectado pero se encontro el instalador en el proyecto."
+        Write-Info "Instalando VB-Cable automaticamente (requiere reinicio del PC)..."
+        Start-Process -FilePath $vbDriver.FullName -ArgumentList "/S" -Verb RunAs -Wait -ErrorAction SilentlyContinue
+        Write-OK "Instalador de VB-Cable ejecutado. Reinicia el PC para aplicar los cambios."
+        $cableInstalled = $true  # asumimos que se instalo
     }
 }
 
@@ -228,74 +330,80 @@ if ($cableInstalled) {
 # ============================================
 # 7. DEPENDENCIAS NPM
 # ============================================
-Write-Step "Verificando dependencias npm..."
+Write-Step "Instalando dependencias npm..."
 
 Set-Location $projectDir
+Refresh-EnvPath
 
-if (Test-Path "node_modules") {
-    Write-OK "node_modules existe"
-} else {
-    Write-Warn "node_modules no encontrado. Instalando dependencias..."
-
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-        npm install
-        if (Test-Path "node_modules") {
-            Write-OK "Dependencias instaladas correctamente"
-        } else {
-            Write-Err "Error instalando dependencias"
-        }
+if (Get-Command npm -ErrorAction SilentlyContinue) {
+    if (Test-Path "node_modules") {
+        Write-OK "node_modules ya existe"
+        Write-Info "Ejecutando 'npm install' para verificar que todo esta actualizado..."
     } else {
-        Write-Err "npm no disponible. Reinicia la terminal e intenta de nuevo."
+        Write-Warn "node_modules no encontrado. Instalando dependencias..."
     }
+    npm install
+    if ($LASTEXITCODE -eq 0 -and (Test-Path "node_modules")) {
+        Write-OK "Dependencias npm instaladas correctamente"
+    } else {
+        Write-Err "Error instalando dependencias npm. Revisa el log anterior."
+    }
+} else {
+    Write-Err "npm no disponible. Node.js no se instalo correctamente."
+    Write-Info "Reinicia el script o instala Node.js manualmente desde https://nodejs.org/"
 }
 
 # ============================================
 # RESUMEN FINAL
 # ============================================
+Refresh-EnvPath
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Magenta
-Write-Host "        INSTALACION COMPLETADA         " -ForegroundColor Magenta
+Write-Host "        INSTALACION COMPLETADA         "  -ForegroundColor Magenta
 Write-Host "========================================" -ForegroundColor Magenta
 Write-Host ""
 
-# Verificacion final
 $allOK = $true
 $summary = @()
 
 # Node.js
 if (Get-Command node -ErrorAction SilentlyContinue) {
-    $summary += @{Name="Node.js"; Status="OK"; Color="Green"}
+    $summary += @{Name="Node.js    "; Status="OK  $(node --version)"; Color="Green"}
 } else {
-    $summary += @{Name="Node.js"; Status="FALTA"; Color="Red"}
+    $summary += @{Name="Node.js    "; Status="FALTA - instalar manualmente"; Color="Red"}
     $allOK = $false
 }
 
 # MPV
 if (Get-Command mpv -ErrorAction SilentlyContinue) {
-    $summary += @{Name="MPV"; Status="OK"; Color="Green"}
+    $summary += @{Name="MPV        "; Status="OK  $((Get-Command mpv).Source)"; Color="Green"}
+} elseif ($mpvExe) {
+    $summary += @{Name="MPV        "; Status="OK  $mpvExe (reinicia la terminal)"; Color="Yellow"}
 } else {
-    $summary += @{Name="MPV"; Status="Reiniciar terminal"; Color="Yellow"}
+    $summary += @{Name="MPV        "; Status="FALTA - instalar manualmente"; Color="Red"}
+    $allOK = $false
 }
 
 # yt-dlp
 if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
-    $summary += @{Name="yt-dlp"; Status="OK"; Color="Green"}
+    $summary += @{Name="yt-dlp     "; Status="OK  $(yt-dlp --version)"; Color="Green"}
 } else {
-    $summary += @{Name="yt-dlp"; Status="Reiniciar terminal"; Color="Yellow"}
+    $summary += @{Name="yt-dlp     "; Status="Instalado - reinicia la terminal"; Color="Yellow"}
 }
 
 # Cloudflared
-if ((Get-Command cloudflared -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files (x86)\cloudflared\cloudflared.exe")) {
+if ((Get-Command cloudflared -ErrorAction SilentlyContinue) -or $cloudflaredExe) {
     $summary += @{Name="Cloudflared"; Status="OK"; Color="Green"}
 } else {
-    $summary += @{Name="Cloudflared"; Status="Reiniciar terminal"; Color="Yellow"}
+    $summary += @{Name="Cloudflared"; Status="Instalado - reinicia la terminal"; Color="Yellow"}
 }
 
 # VB-Cable
 if ($cableInstalled) {
-    $summary += @{Name="VB-Cable"; Status="OK"; Color="Green"}
+    $summary += @{Name="VB-Cable   "; Status="OK"; Color="Green"}
 } else {
-    $summary += @{Name="VB-Cable"; Status="INSTALAR MANUAL"; Color="Red"}
+    $summary += @{Name="VB-Cable   "; Status="INSTALAR MANUAL (ver instrucciones arriba)"; Color="Red"}
     $allOK = $false
 }
 
@@ -303,12 +411,12 @@ if ($cableInstalled) {
 if (Test-Path "node_modules") {
     $summary += @{Name="npm modules"; Status="OK"; Color="Green"}
 } else {
-    $summary += @{Name="npm modules"; Status="FALTA"; Color="Red"}
+    $summary += @{Name="npm modules"; Status="FALTA - ejecuta 'npm install' manualmente"; Color="Red"}
     $allOK = $false
 }
 
 foreach ($item in $summary) {
-    Write-Host "  $($item.Name): " -NoNewline
+    Write-Host "  $($item.Name): " -NoNewline -ForegroundColor White
     Write-Host $item.Status -ForegroundColor $item.Color
 }
 
@@ -321,5 +429,8 @@ if ($allOK) {
     Write-Host "Revisa los mensajes de arriba." -ForegroundColor Yellow
 }
 
+Write-Host ""
+Write-Host "NOTA: Si algunos programas dicen 'reinicia la terminal'," -ForegroundColor Cyan
+Write-Host "      cierra esta ventana, abre una nueva y prueba de nuevo." -ForegroundColor Cyan
 Write-Host ""
 Read-Host "Presiona Enter para salir"
