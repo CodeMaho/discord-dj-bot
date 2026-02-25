@@ -593,6 +593,19 @@ select:focus {
     pointer-events: none;
 }
 
+/* Durante el drag, no mostrar el hover de "clic para reproducir" */
+.queue-container.is-dragging .queue-item-info:hover {
+    background: none;
+}
+
+.queue-container.is-dragging .queue-item-info:hover .queue-item-title {
+    color: var(--text-primary);
+}
+
+.queue-container.is-dragging .queue-item-info:hover .queue-item-duration::before {
+    content: '';
+}
+
 .queue-drag-handle {
     color: var(--text-muted);
     font-size: 18px;
@@ -624,6 +637,24 @@ select:focus {
     flex: 1;
     margin-left: 12px;
     min-width: 0;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin-left: 8px;
+    transition: background 0.15s;
+}
+
+.queue-item-info:hover {
+    background: rgba(87, 242, 135, 0.08);
+}
+
+.queue-item-info:hover .queue-item-title {
+    color: var(--secondary-color);
+}
+
+.queue-item-info:hover .queue-item-duration::before {
+    content: '▶ ';
+    color: var(--secondary-color);
 }
 
 .queue-item-title {

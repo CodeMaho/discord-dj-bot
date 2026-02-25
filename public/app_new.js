@@ -572,7 +572,7 @@ function updateQueueDisplay(queue = []) {
             <div class="queue-item" draggable="true" data-index="${index}">
                 <div class="queue-drag-handle" title="Arrastra para reordenar">⠿</div>
                 <div class="queue-item-number">${index + 1}</div>
-                <div class="queue-item-info">
+                <div class="queue-item-info" onclick="playFromQueue(${index})" title="Clic para reproducir ahora">
                     <div class="queue-item-title">${escapeHtml(title)}</div>
                     <div class="queue-item-duration">${formatTime(duration)}</div>
                 </div>
@@ -951,6 +951,24 @@ async function skipMedia() {
         showNotification('Error', error.message || 'No se pudo saltar', 'error');
     } finally {
         if (elements.skipBtn) elements.skipBtn.disabled = false;
+    }
+}
+
+async function playFromQueue(index) {
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/queue/${index}/play`, { method: 'POST' });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Error desconocido');
+        }
+
+        const data = await response.json();
+        showNotification('▶️ Reproduciendo', data.message, 'success');
+
+    } catch (error) {
+        console.error('[PlayFromQueue] Error:', error);
+        showNotification('Error', error.message || 'No se pudo reproducir', 'error');
     }
 }
 

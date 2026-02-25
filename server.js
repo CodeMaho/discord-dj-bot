@@ -1066,6 +1066,26 @@ app.put('/api/queue/reorder', (req, res) => {
   res.json({ success: true, queue });
 });
 
+// POST: Reproducir canción de la cola directamente (la extrae y la reproduce inmediatamente)
+app.post('/api/queue/:index/play', (req, res) => {
+  const index = parseInt(req.params.index);
+
+  if (isNaN(index) || index < 0 || index >= queue.length) {
+    return res.status(400).json({ error: 'Índice inválido' });
+  }
+
+  const [song] = queue.splice(index, 1);
+  stopCurrentPlayback(true, true);
+  broadcastStatus();
+
+  // Iniciar sin bloquear la respuesta HTTP
+  playWithMPV(song.url, savedAudioDevice, song.title).catch(err => {
+    console.error('[Queue Play] Error:', err.message);
+  });
+
+  res.json({ success: true, message: `Reproduciendo: ${song.title}` });
+});
+
 app.delete('/api/queue/:index', (req, res) => {
   const index = parseInt(req.params.index);
   
