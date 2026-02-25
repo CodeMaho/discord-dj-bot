@@ -754,27 +754,106 @@ app.post('/api/play', async (req, res) => {
   }
 });
 
-// POST: Reproducir canción + generar playlist de mix automático en la cola
+// POST: Crear playlist (búsqueda múltiple, playlist de YT, o mix automático por video)
 app.post('/api/play-with-mix', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL o búsqueda requerida' });
 
   try {
-    // 1. Resolver el input (texto de búsqueda, URL de YouTube o Suno)
+    const isPlaying = currentSong.status === 'playing';
+
+    // ── CASO 1: Texto libre → buscar 15 canciones directamente en YouTube ──
+    if (!isUrl(url) && !isSunoUrl(url)) {
+      console.log(`[Playlist] Texto libre: buscando 15 canciones para "${url}"...`);
+      const searchArgs = [
+        '--js-runtimes', 'node',
+        '--dump-json',
+        '--no-download',
+        '--flat-playlist',
+        `ytsearch15:${url}`
+      ];
+      const output = await ytDlpWrap.execPromise(searchArgs);
+      const lines = output.trim().split('\n').filter(l => l.trim());
+      const songEntries = lines
+        .map(l => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(Boolean)
+        .map((e, i) => {
+          const entryUrl = e.webpage_url || e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null);
+          return entryUrl ? { url: entryUrl, title: e.title || `Canción ${i + 1}`, addedAt: Date.now() } : null;
+        })
+        .filter(Boolean);
+
+      if (songEntries.length === 0) {
+        return res.status(400).json({ error: 'No se encontraron resultados para esa búsqueda' });
+      }
+
+      if (isPlaying) {
+        queue.unshift(...songEntries);
+        broadcastStatus();
+        return res.json({
+          success: true,
+          message: `${songEntries.length} canciones añadidas al frente de la cola`,
+          mixSize: songEntries.length
+        });
+      } else {
+        stopCurrentPlayback(true, true);
+        const first = songEntries.shift();
+        queue.unshift(...songEntries);
+        await playWithMPV(first.url, savedAudioDevice, first.title);
+        return res.json({
+          success: true,
+          message: `Reproduciendo "${first.title}" + ${songEntries.length} canciones en cola`,
+          mixSize: songEntries.length + 1
+        });
+      }
+    }
+
+    // ── CASO 2: URL de playlist de YouTube (list= que no sea mix automático RD) ──
+    const playlistMatch = url.match(/[?&]list=([^&]+)/);
+    if (playlistMatch && !playlistMatch[1].startsWith('RD')) {
+      console.log(`[Playlist] URL de playlist detectada (list=${playlistMatch[1]})`);
+      const info = await getVideoInfoWithArgs(url);
+      const rawEntries = info.entries || [];
+      const songEntries = rawEntries
+        .filter(e => e && e.url)
+        .map(e => ({ url: e.url, title: e.title || 'Desconocido', addedAt: Date.now() }));
+
+      if (songEntries.length === 0) {
+        return res.status(400).json({ error: 'No se pudieron obtener canciones de la playlist' });
+      }
+
+      if (isPlaying) {
+        queue.unshift(...songEntries);
+        broadcastStatus();
+        return res.json({
+          success: true,
+          message: `${songEntries.length} canciones de la playlist añadidas al frente`,
+          mixSize: songEntries.length
+        });
+      } else {
+        stopCurrentPlayback(true, true);
+        const first = songEntries.shift();
+        queue.unshift(...songEntries);
+        await playWithMPV(first.url, savedAudioDevice, first.title);
+        return res.json({
+          success: true,
+          message: `Reproduciendo playlist: "${first.title}" + ${songEntries.length} más`,
+          mixSize: songEntries.length + 1
+        });
+      }
+    }
+
+    // ── CASO 3: URL de video de YouTube / Suno → mix automático RD ──
     console.log('[Mix] Resolviendo input:', url);
     const { info: baseInfo, playUrl: basePlayUrl } = await resolveTrackInfo(url);
     console.log(`[Mix] Base: "${baseInfo.title}" → ${basePlayUrl}`);
 
-    // 2. Intentar extraer el video ID para construir el mix de YouTube
     const videoId = extractYouTubeVideoId(basePlayUrl);
-
-    const isPlaying = currentSong.status === 'playing';
 
     if (!videoId) {
       // No es YouTube (ej: Suno) → sin mix disponible
       console.log('[Mix] No es un vídeo de YouTube, reproduciendo sin mix');
       if (isPlaying) {
-        // Insertar al frente sin interrumpir
         queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
         broadcastStatus();
         return res.json({
@@ -793,7 +872,7 @@ app.post('/api/play-with-mix', async (req, res) => {
       }
     }
 
-    // 3. Obtener el mix automático de YouTube (máx 25 canciones)
+    // Obtener el mix automático de YouTube (máx 25 canciones)
     let mixEntries = [];
     try {
       mixEntries = await getYouTubeMix(videoId);
@@ -802,10 +881,7 @@ app.post('/api/play-with-mix', async (req, res) => {
       console.log('[Mix] No se pudo obtener el mix:', mixError.message);
     }
 
-    // 4. Si algo suena → insertar mix al frente sin interrumpir
-    //    Si no suena → detener y reproducir inmediatamente
     if (isPlaying) {
-      // Construir todas las entradas del mix y meterlas al frente
       const mixQueue = mixEntries.map((entry, i) => {
         const entryUrl = entry.webpage_url
           || entry.url
@@ -814,7 +890,6 @@ app.post('/api/play-with-mix', async (req, res) => {
       }).filter(Boolean);
 
       if (mixQueue.length === 0) {
-        // Sin entradas válidas: al menos añadir la canción base al frente
         queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
       } else {
         queue.unshift(...mixQueue);
@@ -828,7 +903,6 @@ app.post('/api/play-with-mix', async (req, res) => {
         mixSize: mixQueue.length
       });
     } else {
-      // Nada sonando: reproducir primera canción e insertar el resto al frente
       stopCurrentPlayback(true, true);
 
       if (mixEntries.length > 0) {
@@ -840,7 +914,6 @@ app.post('/api/play-with-mix', async (req, res) => {
 
         if (!firstUrl) throw new Error('Primera entrada del mix sin URL válida');
 
-        // Insertar el resto al frente (antes de lo que ya había en cola)
         const restQueue = [];
         for (let i = 1; i < mixEntries.length; i++) {
           const entry = mixEntries[i];
@@ -860,7 +933,6 @@ app.post('/api/play-with-mix', async (req, res) => {
           mixSize: mixEntries.length
         });
       } else {
-        // Sin mix: reproducir la canción base directamente
         await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
         res.json({
           success: true,
