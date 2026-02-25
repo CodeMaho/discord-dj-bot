@@ -652,17 +652,19 @@ app.post('/api/play', async (req, res) => {
         
         stopCurrentPlayback(true, true); // skipBroadcast=true, isManualStop=true (evitar auto-play)
 
-        // Agregar el resto a la cola ANTES de reproducir
+        // Insertar el resto al FRENTE de la cola (antes de lo que ya había)
+        const restEntries = [];
         for (let i = 1; i < info.entries.length; i++) {
           const entry = info.entries[i];
           if (entry && entry.url) {
-            queue.push({
+            restEntries.push({
               url: entry.url,
               title: entry.title || `Video ${i}`,
               addedAt: Date.now()
             });
           }
         }
+        queue.unshift(...restEntries);
         
         // Reproducir el primero (sin setTimeout)
         try {
@@ -766,16 +768,29 @@ app.post('/api/play-with-mix', async (req, res) => {
     // 2. Intentar extraer el video ID para construir el mix de YouTube
     const videoId = extractYouTubeVideoId(basePlayUrl);
 
+    const isPlaying = currentSong.status === 'playing';
+
     if (!videoId) {
-      // No es YouTube (ej: Suno) → reproducir solo sin mix
+      // No es YouTube (ej: Suno) → sin mix disponible
       console.log('[Mix] No es un vídeo de YouTube, reproduciendo sin mix');
-      stopCurrentPlayback(true, true);
-      await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
-      return res.json({
-        success: true,
-        message: `Reproduciendo "${baseInfo.title}" (mix no disponible para esta fuente)`,
-        mixSize: 0
-      });
+      if (isPlaying) {
+        // Insertar al frente sin interrumpir
+        queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
+        broadcastStatus();
+        return res.json({
+          success: true,
+          message: `"${baseInfo.title}" sonará a continuación (mix no disponible)`,
+          mixSize: 0
+        });
+      } else {
+        stopCurrentPlayback(true, true);
+        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+        return res.json({
+          success: true,
+          message: `Reproduciendo "${baseInfo.title}" (mix no disponible para esta fuente)`,
+          mixSize: 0
+        });
+      }
     }
 
     // 3. Obtener el mix automático de YouTube (máx 25 canciones)
@@ -787,44 +802,72 @@ app.post('/api/play-with-mix', async (req, res) => {
       console.log('[Mix] No se pudo obtener el mix:', mixError.message);
     }
 
-    // 4. Detener lo que haya, reproducir primera canción y encolar el resto
-    stopCurrentPlayback(true, true);
-
-    if (mixEntries.length > 0) {
-      const first = mixEntries[0];
-      const firstUrl = first.webpage_url
-        || first.url
-        || (first.id ? `https://www.youtube.com/watch?v=${first.id}` : null);
-      const firstTitle = first.title || baseInfo.title;
-
-      if (!firstUrl) throw new Error('Primera entrada del mix sin URL válida');
-
-      // Añadir el resto a la cola
-      for (let i = 1; i < mixEntries.length; i++) {
-        const entry = mixEntries[i];
+    // 4. Si algo suena → insertar mix al frente sin interrumpir
+    //    Si no suena → detener y reproducir inmediatamente
+    if (isPlaying) {
+      // Construir todas las entradas del mix y meterlas al frente
+      const mixQueue = mixEntries.map((entry, i) => {
         const entryUrl = entry.webpage_url
           || entry.url
           || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : null);
-        if (entryUrl) {
-          queue.push({ url: entryUrl, title: entry.title || `Canción ${i}`, addedAt: Date.now() });
-        }
+        return entryUrl ? { url: entryUrl, title: entry.title || `Canción ${i + 1}`, addedAt: Date.now() } : null;
+      }).filter(Boolean);
+
+      if (mixQueue.length === 0) {
+        // Sin entradas válidas: al menos añadir la canción base al frente
+        queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
+      } else {
+        queue.unshift(...mixQueue);
       }
 
-      await playWithMPV(firstUrl, savedAudioDevice, firstTitle);
-
+      console.log(`[Mix] ${mixQueue.length} canciones añadidas al frente de la cola`);
+      broadcastStatus();
       res.json({
         success: true,
-        message: `Reproduciendo "${firstTitle}" + ${queue.length} canciones en cola`,
-        mixSize: mixEntries.length
+        message: `Mix de ${mixQueue.length} canciones añadido al frente de la cola`,
+        mixSize: mixQueue.length
       });
     } else {
-      // Sin mix disponible: reproducir la canción base directamente
-      await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
-      res.json({
-        success: true,
-        message: `Reproduciendo "${baseInfo.title}" (no se encontró mix relacionado)`,
-        mixSize: 0
-      });
+      // Nada sonando: reproducir primera canción e insertar el resto al frente
+      stopCurrentPlayback(true, true);
+
+      if (mixEntries.length > 0) {
+        const first = mixEntries[0];
+        const firstUrl = first.webpage_url
+          || first.url
+          || (first.id ? `https://www.youtube.com/watch?v=${first.id}` : null);
+        const firstTitle = first.title || baseInfo.title;
+
+        if (!firstUrl) throw new Error('Primera entrada del mix sin URL válida');
+
+        // Insertar el resto al frente (antes de lo que ya había en cola)
+        const restQueue = [];
+        for (let i = 1; i < mixEntries.length; i++) {
+          const entry = mixEntries[i];
+          const entryUrl = entry.webpage_url
+            || entry.url
+            || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : null);
+          if (entryUrl) {
+            restQueue.push({ url: entryUrl, title: entry.title || `Canción ${i}`, addedAt: Date.now() });
+          }
+        }
+        queue.unshift(...restQueue);
+
+        await playWithMPV(firstUrl, savedAudioDevice, firstTitle);
+        res.json({
+          success: true,
+          message: `Reproduciendo "${firstTitle}" + ${restQueue.length} canciones en cola`,
+          mixSize: mixEntries.length
+        });
+      } else {
+        // Sin mix: reproducir la canción base directamente
+        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+        res.json({
+          success: true,
+          message: `Reproduciendo "${baseInfo.title}" (no se encontró mix relacionado)`,
+          mixSize: 0
+        });
+      }
     }
 
   } catch (error) {
