@@ -371,6 +371,18 @@ select:focus {
     border-color: var(--text-muted);
 }
 
+.btn-accent {
+    background: linear-gradient(135deg, #9b59b6, #6c3483);
+    color: white;
+    border: 2px solid transparent;
+}
+
+.btn-accent:hover:not(:disabled) {
+    background: linear-gradient(135deg, #a569bd, #7d3c98);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(155, 89, 182, 0.4);
+}
+
 .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -549,11 +561,45 @@ select:focus {
     margin-bottom: 8px;
     border-left: 3px solid var(--primary-color);
     transition: var(--transition);
+    cursor: default;
+    user-select: none;
 }
 
 .queue-item:hover {
     background: var(--bg-primary);
     transform: translateX(4px);
+}
+
+.queue-item.dragging {
+    opacity: 0.4;
+    transform: scale(0.98);
+    border-left-color: var(--warning-color, #FEE75C);
+}
+
+.queue-item.drag-over {
+    border-left-color: var(--success-color, #57F287);
+    background: var(--bg-primary);
+    transform: translateX(4px) scaleY(1.03);
+    box-shadow: 0 0 0 2px var(--success-color, #57F287);
+}
+
+.queue-drag-handle {
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: grab;
+    padding: 0 6px 0 0;
+    flex-shrink: 0;
+    line-height: 1;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+}
+
+.queue-item:hover .queue-drag-handle {
+    opacity: 1;
+}
+
+.queue-drag-handle:active {
+    cursor: grabbing;
 }
 
 .queue-item-number {

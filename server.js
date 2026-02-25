@@ -970,6 +970,30 @@ app.post('/api/queue', async (req, res) => {
 });
 
 // DELETE: Eliminar canción de la cola
+// PUT: Reordenar cola (mover canción de posición `from` a posición `to`)
+app.put('/api/queue/reorder', (req, res) => {
+  const { from, to } = req.body;
+
+  if (from === undefined || to === undefined) {
+    return res.status(400).json({ error: 'Se requieren los campos from y to' });
+  }
+
+  const f = parseInt(from);
+  const t = parseInt(to);
+
+  if (isNaN(f) || isNaN(t) || f < 0 || f >= queue.length || t < 0 || t >= queue.length) {
+    return res.status(400).json({ error: `Índice fuera de rango (cola: ${queue.length} canciones)` });
+  }
+
+  if (f === t) return res.json({ success: true, queue });
+
+  const [moved] = queue.splice(f, 1);
+  queue.splice(t, 0, moved);
+
+  broadcastStatus();
+  res.json({ success: true, queue });
+});
+
 app.delete('/api/queue/:index', (req, res) => {
   const index = parseInt(req.params.index);
   

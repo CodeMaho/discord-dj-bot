@@ -186,6 +186,7 @@ const elements = {
     urlInput: document.getElementById('urlInput'),
     playBtn: document.getElementById('playBtn'),
     addQueueBtn: document.getElementById('addQueueBtn'),
+    createPlaylistBtn: document.getElementById('createPlaylistBtn'),
     stopBtn: document.getElementById('stopBtn'),
     clearBtn: document.getElementById('clearBtn'),
     currentSong: document.getElementById('currentSong'),
@@ -564,16 +565,12 @@ function updateQueueDisplay(queue = []) {
     
     // Mostrar cola - validar cada canción
     elements.queueContainer.innerHTML = queue.map((song, index) => {
-        // Validar que song sea un objeto válido
-        if (!song || typeof song !== 'object') {
-            return '';
-        }
-        
+        if (!song || typeof song !== 'object') return '';
         const title = song.title && typeof song.title === 'string' ? song.title : 'Desconocido';
         const duration = typeof song.duration === 'number' ? song.duration : 0;
-        
         return `
-            <div class="queue-item">
+            <div class="queue-item" draggable="true" data-index="${index}">
+                <div class="queue-drag-handle" title="Arrastra para reordenar">⠿</div>
                 <div class="queue-item-number">${index + 1}</div>
                 <div class="queue-item-info">
                     <div class="queue-item-title">${escapeHtml(title)}</div>
@@ -583,9 +580,74 @@ function updateQueueDisplay(queue = []) {
             </div>
         `;
     }).join('');
-    
+
     if (elements.skipBtn) elements.skipBtn.disabled = false;
     if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = false;
+
+    initQueueDragDrop();
+}
+
+function initQueueDragDrop() {
+    const container = elements.queueContainer;
+    if (!container) return;
+
+    const items = container.querySelectorAll('.queue-item[draggable]');
+    let dragSrcIndex = null;
+
+    items.forEach(item => {
+        item.addEventListener('dragstart', e => {
+            dragSrcIndex = parseInt(item.dataset.index);
+            e.dataTransfer.effectAllowed = 'move';
+            // Pequeño delay para que el navegador capture el snapshot antes de aplicar estilos
+            setTimeout(() => item.classList.add('dragging'), 0);
+        });
+
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            container.querySelectorAll('.queue-item').forEach(i => i.classList.remove('drag-over'));
+            dragSrcIndex = null;
+        });
+
+        item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            container.querySelectorAll('.queue-item').forEach(i => i.classList.remove('drag-over'));
+            if (parseInt(item.dataset.index) !== dragSrcIndex) {
+                item.classList.add('drag-over');
+            }
+        });
+
+        item.addEventListener('dragleave', () => {
+            item.classList.remove('drag-over');
+        });
+
+        item.addEventListener('drop', async e => {
+            e.preventDefault();
+            const toIndex = parseInt(item.dataset.index);
+            item.classList.remove('drag-over');
+            if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
+                await reorderQueue(dragSrcIndex, toIndex);
+            }
+        });
+    });
+}
+
+async function reorderQueue(from, to) {
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/queue/reorder`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from, to })
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Error al reordenar');
+        }
+    } catch (error) {
+        console.error('[Reorder] Error:', error);
+        showNotification('Error', error.message || 'No se pudo reordenar la cola', 'error');
+    }
 }
 
 function updateButtonStates() {
@@ -650,6 +712,11 @@ function attachEventListeners() {
         elements.clearQueueBtn.addEventListener('click', clearQueue);
     }
     
+    // Botón Crear Playlist
+    if (elements.createPlaylistBtn) {
+        elements.createPlaylistBtn.addEventListener('click', createPlaylist);
+    }
+
     // Botón Limpiar Entrada
     if (elements.clearBtn) {
         elements.clearBtn.addEventListener('click', () => {
@@ -681,7 +748,7 @@ async function playMedia() {
     const url = elements.urlInput.value.trim();
 
     if (!url) {
-        showNotification('Error', 'Por favor, pega una URL de YouTube', 'error');
+        showNotification('Error', 'Escribe una URL o el nombre de una canción', 'error');
         return;
     }
 
@@ -735,7 +802,7 @@ async function addToQueue() {
     const url = elements.urlInput.value.trim();
 
     if (!url) {
-        showNotification('Error', 'Por favor, pega una URL de YouTube', 'error');
+        showNotification('Error', 'Escribe una URL o el nombre de una canción', 'error');
         return;
     }
 
@@ -764,6 +831,46 @@ async function addToQueue() {
         showNotification('Error', error.message || 'No se pudo añadir a la cola', 'error');
     } finally {
         if (elements.addQueueBtn) elements.addQueueBtn.disabled = false;
+    }
+}
+
+async function createPlaylist() {
+    if (!elements.urlInput) return;
+
+    const url = elements.urlInput.value.trim();
+    if (!url) {
+        showNotification('Error', 'Escribe una URL o el nombre de una canción', 'error');
+        return;
+    }
+
+    if (elements.createPlaylistBtn) elements.createPlaylistBtn.disabled = true;
+    if (elements.statusText) {
+        elements.statusText.innerHTML = '⏳ Creando playlist...';
+        elements.statusText.style.color = '#9b59b6';
+    }
+
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/play-with-mix`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.details || data.error || 'Error desconocido');
+        }
+
+        showNotification('🎲 Playlist creada', data.message, 'success');
+        if (elements.urlInput) elements.urlInput.value = '';
+
+    } catch (error) {
+        console.error('[CreatePlaylist Error]', error);
+        showNotification('❌ Error', error.message || 'No se pudo crear la playlist', 'error');
+        if (elements.statusText) elements.statusText.style.color = '';
+    } finally {
+        if (elements.createPlaylistBtn) elements.createPlaylistBtn.disabled = false;
     }
 }
 
