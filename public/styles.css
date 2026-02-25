@@ -583,6 +583,16 @@ select:focus {
     box-shadow: 0 0 0 2px var(--success-color, #57F287);
 }
 
+/* Durante el drag: desactivar transiciones y pointer-events en hijos
+   para evitar que dragleave/dragover parpadeen al pasar por elementos hijos */
+.queue-container.is-dragging .queue-item {
+    transition: none;
+}
+
+.queue-container.is-dragging .queue-item * {
+    pointer-events: none;
+}
+
 .queue-drag-handle {
     color: var(--text-muted);
     font-size: 18px;

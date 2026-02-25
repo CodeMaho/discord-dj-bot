@@ -593,38 +593,52 @@ function initQueueDragDrop() {
 
     const items = container.querySelectorAll('.queue-item[draggable]');
     let dragSrcIndex = null;
+    let currentDragOver = null; // item actualmente resaltado
 
     items.forEach(item => {
         item.addEventListener('dragstart', e => {
             dragSrcIndex = parseInt(item.dataset.index);
             e.dataTransfer.effectAllowed = 'move';
-            // Pequeño delay para que el navegador capture el snapshot antes de aplicar estilos
-            setTimeout(() => item.classList.add('dragging'), 0);
+            // Delay para que el navegador capture el snapshot del elemento antes de aplicar estilos
+            // También activamos is-dragging para desactivar pointer-events en hijos y transiciones
+            setTimeout(() => {
+                item.classList.add('dragging');
+                container.classList.add('is-dragging');
+            }, 0);
         });
 
         item.addEventListener('dragend', () => {
             item.classList.remove('dragging');
+            container.classList.remove('is-dragging');
             container.querySelectorAll('.queue-item').forEach(i => i.classList.remove('drag-over'));
             dragSrcIndex = null;
+            currentDragOver = null;
         });
 
         item.addEventListener('dragover', e => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
-            container.querySelectorAll('.queue-item').forEach(i => i.classList.remove('drag-over'));
-            if (parseInt(item.dataset.index) !== dragSrcIndex) {
-                item.classList.add('drag-over');
-            }
+            // Solo actualizar si el item objetivo cambió (evita DOM thrashing continuo)
+            if (item === currentDragOver) return;
+            if (parseInt(item.dataset.index) === dragSrcIndex) return;
+            if (currentDragOver) currentDragOver.classList.remove('drag-over');
+            currentDragOver = item;
+            item.classList.add('drag-over');
         });
 
-        item.addEventListener('dragleave', () => {
+        item.addEventListener('dragleave', e => {
+            // Con pointer-events:none en hijos, relatedTarget solo puede ser otro item o fuera.
+            // La comprobación contains es seguridad adicional.
+            if (item.contains(e.relatedTarget)) return;
             item.classList.remove('drag-over');
+            if (currentDragOver === item) currentDragOver = null;
         });
 
         item.addEventListener('drop', async e => {
             e.preventDefault();
             const toIndex = parseInt(item.dataset.index);
             item.classList.remove('drag-over');
+            currentDragOver = null;
             if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
                 await reorderQueue(dragSrcIndex, toIndex);
             }
