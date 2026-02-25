@@ -687,64 +687,61 @@ app.post('/api/play', async (req, res) => {
           });
         }
       } else {
-        // Hay algo sonando: interrumpir, reproducir el primero y meter el resto al frente de la cola
-        const firstVideo = info.entries[0];
-        if (!firstVideo || !firstVideo.url) {
-          return res.status(400).json({ error: 'Primer video de playlist inválido' });
-        }
-
-        stopCurrentPlayback(true, true);
-
-        // Meter el resto de la playlist al FRENTE de la cola (antes de lo que ya había)
-        const newEntries = info.entries.slice(1)
+        // Hay algo sonando: insertar toda la playlist al frente de la cola sin interrumpir
+        const newEntries = info.entries
           .filter(e => e && e.url)
           .map(e => ({ url: e.url, title: e.title || 'Desconocido', addedAt: Date.now() }));
         queue.unshift(...newEntries);
-
-        try {
-          await playWithMPV(firstVideo.url, savedAudioDevice, firstVideo.title || 'Video 1');
-          res.json({
-            success: true,
-            message: `Reproduciendo playlist: ${info.entries.length} canciones`,
-            queue: queue.length
-          });
-        } catch (error) {
-          console.error('[Playlist Error]', error.message);
-          res.status(500).json({ error: 'Error al reproducir playlist', details: error.message });
-        }
+        console.log(`[Play] Playlist añadida al frente de la cola: ${newEntries.length} canciones`);
+        broadcastStatus();
+        res.json({
+          success: true,
+          message: `${newEntries.length} canciones añadidas al frente de la cola`,
+          queue: queue.length
+        });
       }
     } else {
       // Es un solo video
       const videoTitle = info?.title || 'Desconocido';
       
-      // Siempre interrumpir lo actual y reproducir inmediatamente
       if (currentSong.status === 'playing') {
-        console.log(`[Play] Interrumpiendo reproduccion actual -> ${videoTitle}`);
-      }
-      stopCurrentPlayback(true, true);
-
-      try {
-        console.log(`[Play] Reproduciendo: ${videoTitle}`);
-        const mpvStart = Date.now();
-        await playWithMPV(playUrl, savedAudioDevice, videoTitle);
-        const mpvTime = Date.now() - mpvStart;
-        const totalTime = Date.now() - startTime;
-        console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
-
+        // Hay algo sonando: insertar al principio de la cola (siguiente canción)
+        queue.unshift({
+          url: playUrl,
+          title: videoTitle,
+          addedAt: Date.now()
+        });
+        console.log(`[Play] Añadido al frente de la cola: ${videoTitle}`);
+        broadcastStatus();
         res.json({
           success: true,
-          message: 'Reproducción iniciada',
-          song: {
-            url: url,
-            title: videoTitle
-          }
+          message: `"${videoTitle}" sonará a continuación`,
+          queue: queue.length
         });
-      } catch (error) {
-        console.error('[Play Error]', error.message);
-        res.status(500).json({
-          error: 'Error al iniciar reproducción',
-          details: error.message
-        });
+      } else {
+        // No hay nada sonando: reproducir inmediatamente
+        stopCurrentPlayback(true, true);
+
+        try {
+          console.log(`[Play] Reproduciendo: ${videoTitle}`);
+          const mpvStart = Date.now();
+          await playWithMPV(playUrl, savedAudioDevice, videoTitle);
+          const mpvTime = Date.now() - mpvStart;
+          const totalTime = Date.now() - startTime;
+          console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
+
+          res.json({
+            success: true,
+            message: 'Reproducción iniciada',
+            song: { url: url, title: videoTitle }
+          });
+        } catch (error) {
+          console.error('[Play Error]', error.message);
+          res.status(500).json({
+            error: 'Error al iniciar reproducción',
+            details: error.message
+          });
+        }
       }
     }
   } catch (error) {
