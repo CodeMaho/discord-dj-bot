@@ -173,6 +173,8 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_DELAY = 1000;
 let progressInterval = null;
+let isDraggingQueue = false;    // Bloquear re-renders de la cola durante drag
+let queueDragInitialized = false; // Inicializar drag solo una vez
 let currentStatus = {
     url: '',
     title: 'Ninguna',
@@ -540,6 +542,8 @@ function updateProgress(song) {
 
 function updateQueueDisplay(queue = []) {
     if (!elements.queueContainer) return;
+    // No re-renderizar mientras el usuario está arrastrando (evita destruir el drag en curso)
+    if (isDraggingQueue) return;
     
     // Actualizar contador
     if (elements.queueCount) {
@@ -569,7 +573,7 @@ function updateQueueDisplay(queue = []) {
         const title = song.title && typeof song.title === 'string' ? song.title : 'Desconocido';
         const duration = typeof song.duration === 'number' ? song.duration : 0;
         return `
-            <div class="queue-item" draggable="true" data-index="${index}">
+            <div class="queue-item" data-index="${index}">
                 <div class="queue-drag-handle" title="Arrastra para reordenar">⠿</div>
                 <div class="queue-item-number">${index + 1}</div>
                 <div class="queue-item-info" onclick="playFromQueue(${index})" title="Clic para reproducir ahora">
@@ -584,65 +588,116 @@ function updateQueueDisplay(queue = []) {
     if (elements.skipBtn) elements.skipBtn.disabled = false;
     if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = false;
 
-    initQueueDragDrop();
+    // Inicializar drag solo la primera vez (usa event delegation sobre el container)
+    if (!queueDragInitialized) initQueueDragDrop();
 }
 
 function initQueueDragDrop() {
     const container = elements.queueContainer;
     if (!container) return;
+    queueDragInitialized = true;
 
-    const items = container.querySelectorAll('.queue-item[draggable]');
     let dragSrcIndex = null;
-    let currentDragOver = null; // item actualmente resaltado
+    let dropTargetIndex = null;
+    let dragGhost = null;
+    let ghostOffsetX = 0;
+    let ghostOffsetY = 0;
 
-    items.forEach(item => {
-        item.addEventListener('dragstart', e => {
-            dragSrcIndex = parseInt(item.dataset.index);
-            e.dataTransfer.effectAllowed = 'move';
-            // Delay para que el navegador capture el snapshot del elemento antes de aplicar estilos
-            // También activamos is-dragging para desactivar pointer-events en hijos y transiciones
-            setTimeout(() => {
-                item.classList.add('dragging');
-                container.classList.add('is-dragging');
-            }, 0);
-        });
+    function getItems() {
+        return Array.from(container.querySelectorAll('.queue-item[data-index]'));
+    }
 
-        item.addEventListener('dragend', () => {
-            item.classList.remove('dragging');
-            container.classList.remove('is-dragging');
-            container.querySelectorAll('.queue-item').forEach(i => i.classList.remove('drag-over'));
-            dragSrcIndex = null;
-            currentDragOver = null;
-        });
-
-        item.addEventListener('dragover', e => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            // Solo actualizar si el item objetivo cambió (evita DOM thrashing continuo)
-            if (item === currentDragOver) return;
-            if (parseInt(item.dataset.index) === dragSrcIndex) return;
-            if (currentDragOver) currentDragOver.classList.remove('drag-over');
-            currentDragOver = item;
-            item.classList.add('drag-over');
-        });
-
-        item.addEventListener('dragleave', e => {
-            // Con pointer-events:none en hijos, relatedTarget solo puede ser otro item o fuera.
-            // La comprobación contains es seguridad adicional.
-            if (item.contains(e.relatedTarget)) return;
-            item.classList.remove('drag-over');
-            if (currentDragOver === item) currentDragOver = null;
-        });
-
-        item.addEventListener('drop', async e => {
-            e.preventDefault();
-            const toIndex = parseInt(item.dataset.index);
-            item.classList.remove('drag-over');
-            currentDragOver = null;
-            if (dragSrcIndex !== null && dragSrcIndex !== toIndex) {
-                await reorderQueue(dragSrcIndex, toIndex);
+    // Devuelve el data-index del item que está bajo la coordenada Y del cursor
+    function getItemIndexAtY(y) {
+        for (const item of getItems()) {
+            const rect = item.getBoundingClientRect();
+            if (y >= rect.top && y <= rect.bottom) {
+                return parseInt(item.dataset.index);
             }
+        }
+        return null;
+    }
+
+    // Resalta el item destino (solo si cambió)
+    function setDropTarget(idx) {
+        if (idx === dropTargetIndex) return;
+        getItems().forEach(item => item.classList.remove('drag-over'));
+        dropTargetIndex = idx;
+        if (idx !== null && idx !== dragSrcIndex) {
+            const el = container.querySelector(`[data-index="${idx}"]`);
+            if (el) el.classList.add('drag-over');
+        }
+    }
+
+    function onMouseMove(e) {
+        // Mover el elemento fantasma con el cursor
+        if (dragGhost) {
+            dragGhost.style.top  = (e.clientY - ghostOffsetY) + 'px';
+            dragGhost.style.left = (e.clientX - ghostOffsetX) + 'px';
+        }
+        setDropTarget(getItemIndexAtY(e.clientY));
+    }
+
+    function onMouseUp() {
+        const from = dragSrcIndex;
+        const to   = dropTargetIndex;
+        cleanup();
+        if (from !== null && to !== null && from !== to) {
+            reorderQueue(from, to);
+        }
+    }
+
+    function cleanup() {
+        isDraggingQueue = false;
+        getItems().forEach(item => item.classList.remove('dragging', 'drag-over'));
+        container.classList.remove('is-dragging');
+        if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup',   onMouseUp);
+        dragSrcIndex = null;
+        dropTargetIndex = null;
+    }
+
+    // Event delegation: escuchar mousedown en el container, filtrar por handle
+    container.addEventListener('mousedown', e => {
+        const handle = e.target.closest('.queue-drag-handle');
+        if (!handle) return;
+        const item = handle.closest('.queue-item[data-index]');
+        if (!item) return;
+
+        e.preventDefault(); // Evitar selección de texto
+
+        isDraggingQueue = true;
+        dragSrcIndex = parseInt(item.dataset.index);
+        dropTargetIndex = dragSrcIndex;
+
+        const rect = item.getBoundingClientRect();
+        ghostOffsetX = e.clientX - rect.left;
+        ghostOffsetY = e.clientY - rect.top;
+
+        // Crear elemento fantasma que sigue al cursor
+        dragGhost = item.cloneNode(true);
+        Object.assign(dragGhost.style, {
+            position:       'fixed',
+            top:            (e.clientY - ghostOffsetY) + 'px',
+            left:           (e.clientX - ghostOffsetX) + 'px',
+            width:          rect.width + 'px',
+            margin:         '0',
+            zIndex:         '9999',
+            pointerEvents:  'none',
+            opacity:        '0.88',
+            transform:      'scale(1.03) rotate(0.8deg)',
+            boxShadow:      '0 12px 32px rgba(0,0,0,0.55)',
+            borderLeftColor: '#FEE75C',
+            transition:     'none',
         });
+        document.body.appendChild(dragGhost);
+
+        item.classList.add('dragging');
+        container.classList.add('is-dragging');
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup',   onMouseUp);
     });
 }
 

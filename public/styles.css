@@ -571,29 +571,30 @@ select:focus {
 }
 
 .queue-item.dragging {
-    opacity: 0.4;
-    transform: scale(0.98);
+    opacity: 0.25;
     border-left-color: var(--warning-color, #FEE75C);
 }
 
 .queue-item.drag-over {
-    border-left-color: var(--success-color, #57F287);
-    background: var(--bg-primary);
-    transform: translateX(4px) scaleY(1.03);
-    box-shadow: 0 0 0 2px var(--success-color, #57F287);
+    border-left-color: var(--secondary-color, #57F287);
+    background: rgba(87, 242, 135, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(87, 242, 135, 0.4);
 }
 
-/* Durante el drag: desactivar transiciones y pointer-events en hijos
-   para evitar que dragleave/dragover parpadeen al pasar por elementos hijos */
+/* Durante el drag con mouse: cursor grabbing y sin hover effects */
+.queue-container.is-dragging {
+    cursor: grabbing;
+}
+
 .queue-container.is-dragging .queue-item {
     transition: none;
 }
 
-.queue-container.is-dragging .queue-item * {
-    pointer-events: none;
+.queue-container.is-dragging .queue-item:hover {
+    transform: none;
+    background: var(--bg-tertiary);
 }
 
-/* Durante el drag, no mostrar el hover de "clic para reproducir" */
 .queue-container.is-dragging .queue-item-info:hover {
     background: none;
 }
