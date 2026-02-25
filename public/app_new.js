@@ -217,149 +217,277 @@ const elements = {
 // ============================================
 // BOUNCING STICKERS — estilo DVD logo
 // Los stickers rebotan por la pantalla y reaccionan al ritmo de la música.
-// La reacción al audio se simula mediante un BPM de 120 (beat cada 500ms)
-// sincronizado con el inicio de la reproducción.
+// Sincronización real via Web Audio API (captura VB-Audio/micrófono).
+// Fallback a BPM simulado (120 BPM) si no se concede permiso de audio.
+// Los stickers se pueden agarrar y lanzar con el ratón.
 // ============================================
 
 const StickersSystem = (() => {
-    const COUNT      = 4;          // stickers simultáneos en pantalla
-    const BASE_SIZE  = 90;         // tamaño base en px (varía ±15 por sticker)
-    const PLAY_SPEED = 140;        // velocidad px/s cuando hay música
-    const IDLE_SPEED = 30;         // velocidad px/s cuando está parado
-    const BPM        = 120;        // BPM simulado para la reacción al ritmo
-    const BEAT_MS    = 60000 / BPM;// ms por beat (500ms a 120 BPM)
+    // ── Configuración física ──────────────────────────────────────────────
+    const COUNT        = 4;      // stickers simultáneos
+    const BASE_SIZE    = 90;     // tamaño base px
+    const FRICTION     = 0.988;  // rozamiento por frame (~62% velocidad tras 1s)
+    const BOUNCE_DAMP  = 0.78;   // energía conservada en rebote
+    const MAX_SPEED    = 1600;   // px/s máximo (lanzamiento fuerte)
+    const IDLE_SPEED   = 40;     // velocidad mínima en reposo
+    const PLAY_SPEED   = 100;    // velocidad mínima con música
+    const BEAT_IMPULSE = 55;     // px/s añadidos en cada beat
 
-    let overlay     = null;
-    let stickers    = [];
-    let gifUrls     = [];
-    let rafId       = null;
-    let lastTime    = 0;
+    let overlay  = null;
+    let stickers = [];
+    let gifUrls  = [];
+    let rafId    = null;
+    let lastTime = 0;
+    let playing  = false;
+
+    // ── Estado de audio / beats ───────────────────────────────────────────
+    let audioCtx     = null;
+    let analyser     = null;
+    let audioActive  = false;
+    let audioTried   = false;
     let lastBeatTime = 0;
-    let playing     = false;
+    let prevEnergy   = 0;
+    let simulTimer   = 0;       // temporizador para BPM simulado
 
-    // ── Cargar lista de GIFs del backend ──────────────────────────────────
+    // ── Drag / throw ──────────────────────────────────────────────────────
+    let grabbedSticker = null;
+    const mouseHistory = [];    // {x, y, t} últimos 80ms
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function rnd(a, b) { return a + Math.random() * (b - a); }
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    // ── Eventos globales de ratón (para drag fuera del sticker) ───────────
+    document.addEventListener('mousemove', (e) => {
+        const now = performance.now();
+        mouseHistory.push({ x: e.clientX, y: e.clientY, t: now });
+        while (mouseHistory.length > 1 && now - mouseHistory[0].t > 80) mouseHistory.shift();
+        if (grabbedSticker) {
+            grabbedSticker.cx = e.clientX - grabbedSticker.grabOffX;
+            grabbedSticker.cy = e.clientY - grabbedSticker.grabOffY;
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!grabbedSticker) return;
+        const s = grabbedSticker;
+        // Calcular velocidad de lanzamiento desde historial de ratón
+        if (mouseHistory.length >= 2) {
+            const a  = mouseHistory[0];
+            const b  = mouseHistory[mouseHistory.length - 1];
+            const dt = (b.t - a.t) / 1000;
+            if (dt > 0.005) {
+                s.vx = clamp((b.x - a.x) / dt, -MAX_SPEED, MAX_SPEED);
+                s.vy = clamp((b.y - a.y) / dt, -MAX_SPEED, MAX_SPEED);
+            } else {
+                s.vx = 0; s.vy = 0;
+            }
+        }
+        s.grabbed          = false;
+        s.el.style.cursor  = 'grab';
+        s.el.style.zIndex  = '';
+        grabbedSticker     = null;
+    });
+
+    // ── Cargar GIFs ───────────────────────────────────────────────────────
     async function loadGifs() {
         try {
             const res  = await fetch(`${getBackendUrl()}/api/gifs`);
             const data = await res.json();
             gifUrls    = data.gifs || [];
-            console.log(`[Stickers] ${gifUrls.length} GIFs encontrados`);
         } catch (e) {
             console.warn('[Stickers] No se pudieron cargar GIFs:', e.message);
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-    function rnd(a, b)  { return a + Math.random() * (b - a); }
-    function pick(arr)  { return arr[Math.floor(Math.random() * arr.length)]; }
-
-    // ── Crear overlay fullscreen sin bloquear interacción ─────────────────
+    // ── Crear overlay ─────────────────────────────────────────────────────
     function createOverlay() {
-        overlay            = document.createElement('div');
-        overlay.id         = 'stickers-overlay';
-        document.body.appendChild(overlay);
+        overlay = document.getElementById('stickers-overlay');
+        if (!overlay) {
+            overlay    = document.createElement('div');
+            overlay.id = 'stickers-overlay';
+            document.body.appendChild(overlay);
+        }
+        overlay.innerHTML = '';
     }
 
-    // ── Crear un sticker con posición y dirección aleatorias ──────────────
+    // ── Crear sticker ─────────────────────────────────────────────────────
     function makeSticker(url) {
-        const size  = Math.round(rnd(BASE_SIZE - 15, BASE_SIZE + 15));
+        const size  = Math.round(rnd(BASE_SIZE - 15, BASE_SIZE + 20));
         const angle = rnd(0, Math.PI * 2);
-        const speed = IDLE_SPEED;
-
-        const el     = document.createElement('img');
+        const el    = document.createElement('img');
         el.src       = url;
         el.className = 'sticker';
+        el.style.width  = size + 'px';
+        el.style.height = size + 'px';
         overlay.appendChild(el);
 
-        return {
+        const s = {
             el,
-            x:     rnd(0, window.innerWidth  - size),
-            y:     rnd(0, window.innerHeight - size),
-            vx:    Math.cos(angle) * speed,
-            vy:    Math.sin(angle) * speed,
-            size,           // tamaño visual base
-            pulse: 0,       // 0-1: intensidad del pulso actual
-            hue:   Math.floor(rnd(0, 360)),
+            cx:       rnd(size / 2, window.innerWidth  - size / 2),
+            cy:       rnd(size / 2, window.innerHeight - size / 2),
+            vx:       Math.cos(angle) * IDLE_SPEED,
+            vy:       Math.sin(angle) * IDLE_SPEED,
+            size,
+            pulse:    0,
+            hue:      Math.floor(rnd(0, 360)),
+            grabbed:  false,
+            grabOffX: 0,
+            grabOffY: 0,
         };
+
+        el.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            s.grabbed      = true;
+            grabbedSticker = s;
+            s.vx = 0; s.vy = 0;
+            s.grabOffX     = e.clientX - s.cx;
+            s.grabOffY     = e.clientY - s.cy;
+            mouseHistory.length = 0;
+            el.style.cursor = 'grabbing';
+            el.style.zIndex = '9999';
+        });
+
+        return s;
     }
 
-    // ── Disparar en cada beat simulado ────────────────────────────────────
-    function onBeat() {
+    // ── Beat ──────────────────────────────────────────────────────────────
+    function onBeat(intensity = 1.0) {
+        const now = performance.now();
+        if (now - lastBeatTime < 180) return; // debounce
+        lastBeatTime = now;
         stickers.forEach(s => {
-            s.pulse = 1.0;
-            // Impulso de velocidad proporcional al beat
-            const spd     = Math.hypot(s.vx, s.vy);
-            const maxBoost = PLAY_SPEED * 1.7;
-            if (spd > 0) {
-                const newSpd = Math.min(spd * 1.25, maxBoost);
-                s.vx = (s.vx / spd) * newSpd;
-                s.vy = (s.vy / spd) * newSpd;
-            }
+            if (s.grabbed) return;
+            s.pulse = Math.min(s.pulse + intensity * 0.8, 1.5);
+            const dir = rnd(0, Math.PI * 2);
+            s.vx += Math.cos(dir) * BEAT_IMPULSE * intensity;
+            s.vy += Math.sin(dir) * BEAT_IMPULSE * intensity;
         });
     }
 
-    // ── Loop de animación principal (requestAnimationFrame) ───────────────
-    function loop(now) {
-        const dt = Math.min((now - lastTime) / 1000, 0.05); // cap 50ms
-        lastTime = now;
+    // ── Detección de beats via Web Audio API ──────────────────────────────
+    function detectBeat() {
+        const bins = analyser.frequencyBinCount;
+        const data = new Uint8Array(bins);
+        analyser.getByteFrequencyData(data);
+        // Frecuencias de graves (primer 8% ≈ 0–200 Hz a 44 kHz)
+        const end = Math.max(1, Math.floor(bins * 0.08));
+        let energy = 0;
+        for (let i = 0; i < end; i++) energy += data[i] * data[i];
+        energy = Math.sqrt(energy / end);
+        if (energy > prevEnergy * 1.45 && energy > 12) {
+            onBeat(clamp(energy / 80, 0.5, 2.0));
+        }
+        prevEnergy = prevEnergy * 0.88 + energy * 0.12;
+    }
 
+    // ── Intentar sincronización de audio real ─────────────────────────────
+    async function tryAudioSync() {
+        if (audioTried || audioActive) return;
+        audioTried = true;
+        try {
+            // Pedir permiso de micrófono (el navegador muestra el prompt)
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            });
+            // Buscar VB-Audio entre los dispositivos disponibles
+            const devices  = await navigator.mediaDevices.enumerateDevices();
+            const vbDevice = devices.find(d =>
+                d.kind === 'audioinput' &&
+                /vb.?audio|cable output|virtual cable|voicemeeter/i.test(d.label)
+            );
+            let finalStream = stream;
+            if (vbDevice) {
+                stream.getTracks().forEach(t => t.stop());
+                finalStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        deviceId: { exact: vbDevice.deviceId },
+                        echoCancellation: false, noiseSuppression: false, autoGainControl: false
+                    }
+                });
+                console.log('[Stickers] Sincronizado con VB-Audio:', vbDevice.label);
+            } else {
+                console.log('[Stickers] VB-Audio no encontrado, usando micrófono por defecto');
+            }
+            audioCtx = new AudioContext();
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 1024;
+            analyser.smoothingTimeConstant = 0.6;
+            audioCtx.createMediaStreamSource(finalStream).connect(analyser);
+            // Sin conexión a destination → no suena por los altavoces del navegador
+            audioActive = true;
+        } catch (e) {
+            console.log('[Stickers] Sin acceso a audio, usando BPM simulado (120 BPM)');
+        }
+    }
+
+    // ── Aplicar transform al DOM ──────────────────────────────────────────
+    function applyTransform(s) {
+        const scale = 1 + s.pulse * 0.45;
+        const glow  = 2 + s.pulse * 22;
+        const alpha = 0.15 + s.pulse * 0.85;
+        const tx    = (s.cx - s.size / 2).toFixed(1);
+        const ty    = (s.cy - s.size / 2).toFixed(1);
+        s.el.style.transform = `translate(${tx}px, ${ty}px) scale(${scale.toFixed(3)})`;
+        s.el.style.filter    =
+            `hue-rotate(${s.hue}deg) ` +
+            `drop-shadow(0 0 ${glow.toFixed(1)}px rgba(255,255,255,${alpha.toFixed(2)}))`;
+    }
+
+    // ── Loop principal (rAF) ──────────────────────────────────────────────
+    function loop(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
         const W = window.innerWidth;
         const H = window.innerHeight;
 
-        // Beat simulado: cada BEAT_MS ms mientras reproduce
-        if (playing && now - lastBeatTime >= BEAT_MS) {
-            lastBeatTime = now;
-            onBeat();
+        // Beats: reales si hay audio, simulados si no
+        if (audioActive && analyser) {
+            detectBeat();
+        } else if (playing && now - simulTimer >= 500) {
+            simulTimer = now;
+            onBeat(1.0);
         }
 
         stickers.forEach(s => {
-            // ── Lerp de velocidad hacia el target según estado ──
-            const targetSpd = playing ? PLAY_SPEED : IDLE_SPEED;
+            if (s.grabbed) {
+                s.pulse = Math.max(s.pulse * 0.97, 0.3);
+                applyTransform(s);
+                return;
+            }
+
+            // Empuje suave si va muy lento (tras decelerar)
             const curSpd    = Math.hypot(s.vx, s.vy);
-            if (curSpd > 0) {
-                const lerp   = 1 - Math.pow(0.05, dt);
-                const newSpd = curSpd + (targetSpd - curSpd) * lerp;
-                s.vx = (s.vx / curSpd) * newSpd;
-                s.vy = (s.vy / curSpd) * newSpd;
+            const targetSpd = playing ? PLAY_SPEED : IDLE_SPEED;
+            if (curSpd < targetSpd * 0.25) {
+                const dir = rnd(0, Math.PI * 2);
+                s.vx += Math.cos(dir) * targetSpd * 0.3;
+                s.vy += Math.sin(dir) * targetSpd * 0.3;
             }
 
-            // ── Mover ──
-            s.x += s.vx * dt;
-            s.y += s.vy * dt;
+            // Física
+            s.cx += s.vx * dt;
+            s.cy += s.vy * dt;
+            s.vx *= FRICTION;
+            s.vy *= FRICTION;
 
-            // ── Decaída del pulso (rápida: ~0.25s) ──
-            s.pulse *= Math.pow(0.001, dt);
-            const scale   = 1 + s.pulse * 0.5;           // hasta 1.5× en el pico
-            const visSize = s.size * scale;
-
-            // ── Rebote en paredes ──
+            // Rebote (basado en centro)
+            const r = s.size / 2;
             let bounced = false;
-            if (s.x < 0) {
-                s.x = 0; s.vx = Math.abs(s.vx); bounced = true;
-            } else if (s.x + visSize > W) {
-                s.x = W - visSize; s.vx = -Math.abs(s.vx); bounced = true;
-            }
-            if (s.y < 0) {
-                s.y = 0; s.vy = Math.abs(s.vy); bounced = true;
-            } else if (s.y + visSize > H) {
-                s.y = H - visSize; s.vy = -Math.abs(s.vy); bounced = true;
-            }
+            if (s.cx - r < 0)  { s.cx = r;     s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+            if (s.cx + r > W)  { s.cx = W - r; s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+            if (s.cy - r < 0)  { s.cy = r;     s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
+            if (s.cy + r > H)  { s.cy = H - r; s.vy = -Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
 
-            // Al rebotar: cambiar color y mini-pulso (como el logo de DVD)
             if (bounced) {
                 s.hue   = (s.hue + Math.floor(rnd(50, 130))) % 360;
-                s.pulse = Math.max(s.pulse, 0.45);
+                s.pulse = Math.max(s.pulse, 0.5);
             }
 
-            // ── Aplicar al DOM: solo transform + filter (sin reflow) ──
-            const glow  = 2  + s.pulse * 20;
-            const alpha = 0.15 + s.pulse * 0.85;
-            s.el.style.width     = `${s.size}px`;
-            s.el.style.height    = `${s.size}px`;
-            s.el.style.transform = `translate(${s.x}px, ${s.y}px) scale(${scale.toFixed(3)})`;
-            s.el.style.filter    =
-                `hue-rotate(${s.hue}deg) ` +
-                `drop-shadow(0 0 ${glow.toFixed(1)}px rgba(255,255,255,${alpha.toFixed(2)}))`;
+            // Decaída del pulso
+            s.pulse *= Math.pow(0.001, dt);
+            applyTransform(s);
         });
 
         rafId = requestAnimationFrame(loop);
@@ -368,26 +496,24 @@ const StickersSystem = (() => {
     // ── API pública ───────────────────────────────────────────────────────
     async function init() {
         await loadGifs();
-        if (gifUrls.length === 0) {
-            console.warn('[Stickers] Sin GIFs disponibles, sistema desactivado');
+        if (!gifUrls.length) {
+            console.warn('[Stickers] Sin GIFs, sistema desactivado');
             return;
         }
         createOverlay();
-        for (let i = 0; i < COUNT; i++) {
-            stickers.push(makeSticker(pick(gifUrls)));
-        }
-        lastTime = performance.now();
-        rafId    = requestAnimationFrame(loop);
+        for (let i = 0; i < COUNT; i++) stickers.push(makeSticker(pick(gifUrls)));
+        lastTime = simulTimer = performance.now();
+        rafId = requestAnimationFrame(loop);
         console.log(`[Stickers] ${COUNT} stickers activos (${gifUrls.length} GIFs)`);
     }
 
-    // Llamar cuando cambia el estado playing/stopped
     function setPlaying(isPlaying) {
         if (isPlaying === playing) return;
         playing = isPlaying;
         if (isPlaying) {
-            lastBeatTime = performance.now();
-            onBeat(); // beat inmediato al arrancar
+            simulTimer = performance.now();
+            onBeat(1.2);
+            tryAudioSync(); // pedir permiso de audio la primera vez que suene música
         }
     }
 

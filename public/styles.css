@@ -765,9 +765,13 @@ select:focus {
     object-fit: contain;
     image-rendering: pixelated;
     user-select: none;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: grab;
     transform-origin: center center;
     will-change: transform, filter;
+}
+.sticker:active {
+    cursor: grabbing;
 }
 
 /* Header Right Section */
