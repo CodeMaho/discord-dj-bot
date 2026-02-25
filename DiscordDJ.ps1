@@ -252,9 +252,32 @@ if ($missing.Count -gt 0) {
     if ($missing -contains "npm packages") {
         Write-Host "  Instalando dependencias npm..." -ForegroundColor Cyan
         if (Get-Command npm -ErrorAction SilentlyContinue) {
+
+            # Algunos equipos bloquean los scripts .ps1 internos de npm.
+            # Fijamos la politica para el proceso actual (no afecta al sistema).
+            try {
+                $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser
+                if ($currentPolicy -in @("Restricted", "AllSigned")) {
+                    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+                    Write-OK "Politica de ejecucion ajustada a RemoteSigned (usuario)"
+                }
+            } catch {
+                # Si falla el cambio de usuario, forzamos solo para este proceso
+                Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+                Write-Warn "Politica ajustada solo para esta sesion (Bypass)"
+            }
+
             npm install
-            if ($LASTEXITCODE -eq 0) { Write-OK "npm packages instalados" }
-            else { Write-Err "Error en npm install" }
+            if ($LASTEXITCODE -eq 0) {
+                Write-OK "npm packages instalados"
+            } else {
+                Write-Err "Error en npm install (codigo: $LASTEXITCODE)"
+                Write-Warn "Si el error menciona 'cannot be loaded' o 'running scripts is disabled',"
+                Write-Warn "abre PowerShell como admin y ejecuta:"
+                Write-Warn "  Set-ExecutionPolicy RemoteSigned -Scope LocalMachine"
+                Read-Host "`n  Presiona Enter para salir"
+                exit 1
+            }
         } else {
             Write-Err "npm no disponible. Reinicia el bot tras instalar Node.js."
             Read-Host "`n  Presiona Enter para salir"
@@ -292,3 +315,19 @@ Write-Info "El tunel Cloudflare se iniciara automaticamente."
 Write-Host ""
 
 node "$projectDir\server.js"
+
+# Si node termina (por error o cierre inesperado), mostrar mensaje y esperar
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) {
+    Write-Host ""
+    Write-Err  "El servidor se detuvo inesperadamente (codigo de salida: $exitCode)"
+    Write-Warn "Revisa los mensajes anteriores para ver el error."
+    Write-Warn "Si el problema persiste, comprueba que VB-Audio esta instalado"
+    Write-Warn "y que la cuenta DJ esta en un canal de voz."
+} else {
+    Write-Host ""
+    Write-Host "  Servidor detenido." -ForegroundColor Gray
+}
+
+Write-Host ""
+Read-Host "  Presiona Enter para cerrar"
