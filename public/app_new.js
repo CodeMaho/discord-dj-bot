@@ -217,8 +217,8 @@ const elements = {
 // ============================================
 // BOUNCING STICKERS — estilo DVD logo
 // Los stickers rebotan por la pantalla y reaccionan al ritmo de la música.
-// Sincronización real via Web Audio API (captura VB-Audio/micrófono).
-// Fallback a BPM simulado (120 BPM) si no se concede permiso de audio.
+// El servidor analiza el audio con ffmpeg y emite eventos beat por WebSocket.
+// Todos los clientes (locales y remotos) reciben los mismos beats simultáneamente.
 // Los stickers se pueden agarrar y lanzar con el ratón.
 // ============================================
 
@@ -240,14 +240,7 @@ const StickersSystem = (() => {
     let lastTime = 0;
     let playing  = false;
 
-    // ── Estado de audio / beats ───────────────────────────────────────────
-    let audioCtx     = null;
-    let analyser     = null;
-    let audioActive  = false;
-    let audioTried   = false;
-    let lastBeatTime = 0;
-    let prevEnergy   = 0;
-    let simulTimer   = 0;       // temporizador para BPM simulado
+    let simulTimer = 0;   // temporizador BPM simulado (fallback si ffmpeg no está)
 
     // ── Drag / throw ──────────────────────────────────────────────────────
     let grabbedSticker = null;
@@ -352,11 +345,9 @@ const StickersSystem = (() => {
         return s;
     }
 
-    // ── Beat ──────────────────────────────────────────────────────────────
+    // ── Reacción al beat ──────────────────────────────────────────────────
+    // Llamado por el servidor vía WebSocket (beat real) o por el simulador (fallback)
     function onBeat(intensity = 1.0) {
-        const now = performance.now();
-        if (now - lastBeatTime < 180) return; // debounce
-        lastBeatTime = now;
         stickers.forEach(s => {
             if (s.grabbed) return;
             s.pulse = Math.min(s.pulse + intensity * 0.8, 1.5);
@@ -364,62 +355,6 @@ const StickersSystem = (() => {
             s.vx += Math.cos(dir) * BEAT_IMPULSE * intensity;
             s.vy += Math.sin(dir) * BEAT_IMPULSE * intensity;
         });
-    }
-
-    // ── Detección de beats via Web Audio API ──────────────────────────────
-    function detectBeat() {
-        const bins = analyser.frequencyBinCount;
-        const data = new Uint8Array(bins);
-        analyser.getByteFrequencyData(data);
-        // Frecuencias de graves (primer 8% ≈ 0–200 Hz a 44 kHz)
-        const end = Math.max(1, Math.floor(bins * 0.08));
-        let energy = 0;
-        for (let i = 0; i < end; i++) energy += data[i] * data[i];
-        energy = Math.sqrt(energy / end);
-        if (energy > prevEnergy * 1.45 && energy > 12) {
-            onBeat(clamp(energy / 80, 0.5, 2.0));
-        }
-        prevEnergy = prevEnergy * 0.88 + energy * 0.12;
-    }
-
-    // ── Intentar sincronización de audio real ─────────────────────────────
-    async function tryAudioSync() {
-        if (audioTried || audioActive) return;
-        audioTried = true;
-        try {
-            // Pedir permiso de micrófono (el navegador muestra el prompt)
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-            });
-            // Buscar VB-Audio entre los dispositivos disponibles
-            const devices  = await navigator.mediaDevices.enumerateDevices();
-            const vbDevice = devices.find(d =>
-                d.kind === 'audioinput' &&
-                /vb.?audio|cable output|virtual cable|voicemeeter/i.test(d.label)
-            );
-            let finalStream = stream;
-            if (vbDevice) {
-                stream.getTracks().forEach(t => t.stop());
-                finalStream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        deviceId: { exact: vbDevice.deviceId },
-                        echoCancellation: false, noiseSuppression: false, autoGainControl: false
-                    }
-                });
-                console.log('[Stickers] Sincronizado con VB-Audio:', vbDevice.label);
-            } else {
-                console.log('[Stickers] VB-Audio no encontrado, usando micrófono por defecto');
-            }
-            audioCtx = new AudioContext();
-            analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 1024;
-            analyser.smoothingTimeConstant = 0.6;
-            audioCtx.createMediaStreamSource(finalStream).connect(analyser);
-            // Sin conexión a destination → no suena por los altavoces del navegador
-            audioActive = true;
-        } catch (e) {
-            console.log('[Stickers] Sin acceso a audio, usando BPM simulado (120 BPM)');
-        }
     }
 
     // ── Aplicar transform al DOM ──────────────────────────────────────────
@@ -442,10 +377,8 @@ const StickersSystem = (() => {
         const W = window.innerWidth;
         const H = window.innerHeight;
 
-        // Beats: reales si hay audio, simulados si no
-        if (audioActive && analyser) {
-            detectBeat();
-        } else if (playing && now - simulTimer >= 500) {
+        // BPM simulado como fallback (el servidor manda beats reales si ffmpeg está disponible)
+        if (playing && now - simulTimer >= 500) {
             simulTimer = now;
             onBeat(1.0);
         }
@@ -513,11 +446,16 @@ const StickersSystem = (() => {
         if (isPlaying) {
             simulTimer = performance.now();
             onBeat(1.2);
-            tryAudioSync(); // pedir permiso de audio la primera vez que suene música
         }
     }
 
-    return { init, setPlaying };
+    // Llamado desde el handler WebSocket cuando el servidor detecta un beat real
+    function onExternalBeat(intensity) {
+        simulTimer = performance.now() + 800; // evitar beat doble del simulador
+        onBeat(Math.min(intensity, 2.5));
+    }
+
+    return { init, setPlaying, onExternalBeat };
 })();
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -724,6 +662,10 @@ function initializeWebSocket() {
             if (data.type === 'config' && data.data) {
                 console.log('[WS Config] Recibida configuración:', data.data);
                 handleConfigUpdate(data.data);
+            }
+
+            if (data.type === 'beat') {
+                StickersSystem.onExternalBeat(data.intensity);
             }
         } catch (error) {
             console.error('Error procesando mensaje WebSocket:', error);

@@ -330,6 +330,109 @@ function loadState() {
   }
 }
 
+// ── Beat Analyzer ─────────────────────────────────────────────────────────
+// Analiza el audio en tiempo real (vía ffmpeg) y emite eventos beat por WS
+// a todos los clientes conectados para sincronizar los stickers.
+const BeatAnalyzer = (() => {
+  let proc       = null;
+  let audioBuf   = Buffer.alloc(0);
+  let avgEnergy  = 0;
+  let lastBeat   = 0;
+  let active     = false;
+
+  const SAMPLE_RATE   = 11025;       // Hz - suficiente para detectar graves
+  const CHUNK_SAMPLES = 512;
+  const CHUNK_BYTES   = CHUNK_SAMPLES * 2;  // int16le = 2 bytes por muestra
+  const THRESHOLD     = 1.42;        // el beat tiene que ser X veces la media
+  const COOLDOWN_MS   = 190;         // mínimo ms entre beats (~315 BPM máx)
+
+  function broadcastBeat(intensity) {
+    const msg = JSON.stringify({ type: 'beat', intensity });
+    wss.clients.forEach(c => {
+      if (c.readyState === WebSocket.OPEN) c.send(msg);
+    });
+  }
+
+  function processPCM(buf) {
+    audioBuf = Buffer.concat([audioBuf, buf]);
+    while (audioBuf.length >= CHUNK_BYTES) {
+      const chunk = audioBuf.slice(0, CHUNK_BYTES);
+      audioBuf    = audioBuf.slice(CHUNK_BYTES);
+
+      // RMS de energía del chunk (16 bits signed LE)
+      let energy = 0;
+      for (let i = 0; i < CHUNK_BYTES - 1; i += 2) {
+        const s = chunk.readInt16LE(i) / 32768;
+        energy += s * s;
+      }
+      energy = Math.sqrt(energy / CHUNK_SAMPLES);
+
+      const now = Date.now();
+      if (energy > avgEnergy * THRESHOLD && energy > 0.008 && now - lastBeat > COOLDOWN_MS) {
+        lastBeat = now;
+        broadcastBeat(Math.min(energy / (avgEnergy || 0.001), 3.0));
+      }
+      avgEnergy = avgEnergy * 0.90 + energy * 0.10;
+    }
+  }
+
+  async function start(url) {
+    stop();
+    active    = true;
+    avgEnergy = 0;
+    lastBeat  = 0;
+    audioBuf  = Buffer.alloc(0);
+
+    try {
+      // Obtener URL directa del audio (yt-dlp, misma lógica que MPV usa internamente)
+      const raw = await ytDlpWrap.execPromise([
+        url,
+        '--get-url',
+        '-f', 'bestaudio[ext=webm]/bestaudio/best',
+        '--no-playlist',
+        '--js-runtimes', 'node'
+      ]);
+      const audioUrl = raw.trim().split('\n')[0];
+      if (!audioUrl || !active) return;
+
+      // ffmpeg: decodifica el stream a PCM crudo de baja calidad (solo para análisis)
+      proc = spawn('ffmpeg', [
+        '-reconnect', '1', '-reconnect_streamed', '1',
+        '-i', audioUrl,
+        '-vn',
+        '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1',
+        'pipe:1',
+        '-loglevel', 'quiet'
+      ]);
+
+      proc.stdout.on('data', processPCM);
+      proc.stderr.on('data', () => {});
+      proc.on('error', err => {
+        if (err.code === 'ENOENT') {
+          console.log('[BeatAnalyzer] ffmpeg no encontrado – usando BPM simulado en cliente');
+        } else {
+          console.error('[BeatAnalyzer]', err.message);
+        }
+      });
+      proc.on('exit', () => { proc = null; });
+      console.log('[BeatAnalyzer] Análisis de audio iniciado');
+    } catch (e) {
+      console.error('[BeatAnalyzer] Error al iniciar:', e.message);
+    }
+  }
+
+  function stop() {
+    active = false;
+    if (proc) {
+      try { proc.kill(); } catch (_) {}
+      proc = null;
+    }
+    audioBuf = Buffer.alloc(0);
+  }
+
+  return { start, stop };
+})();
+
 // Broadcast a todos los clientes conectados
 function broadcastStatus() {
   // Calcular tiempo transcurrido si está reproduciendo
@@ -424,6 +527,8 @@ function stopCurrentPlayback(skipBroadcast = false, isManualStop = true) {
     }
   }
 
+  BeatAnalyzer.stop();
+
   currentSong.status = 'stopped';
   currentSong.title = 'Ninguna';
   currentSong.url = '';
@@ -497,6 +602,7 @@ async function playWithMPV(url, audioDevice, title = null) {
       currentSong.duration = duration;
       currentSong.startedAt = Date.now();
       broadcastStatus();
+      BeatAnalyzer.start(url);
       
       const mpvArgs = [
         '--no-video',
