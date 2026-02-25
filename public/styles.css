@@ -797,12 +797,57 @@ select:focus {
 .sticker:active {
     cursor: grabbing;
 }
+.sticker.invincible {
+    animation: invincible-flash 0.4s linear infinite;
+}
+@keyframes invincible-flash {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.35; }
+}
+
+/* Indicador de vidas encima de cada sticker */
+.sticker-lives {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 12px;
+    line-height: 1;
+    pointer-events: none;
+    text-align: center;
+    white-space: nowrap;
+    transform-origin: top left;
+    user-select: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
 
 /* Header Right Section */
 .header-right {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+/* Revive Button (skull) */
+.btn-revive {
+    background: var(--bg-tertiary);
+    border: 2px solid rgba(255,80,80,0.4);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.btn-revive:hover {
+    background: rgba(255,80,80,0.15);
+    border-color: rgba(255,80,80,0.8);
+    transform: scale(1.15);
+}
+.btn-revive:active {
+    transform: scale(0.92);
 }
 
 /* Settings Button */

@@ -353,6 +353,8 @@ const BeatAnalyzer = (() => {
     wss.clients.forEach(c => {
       if (c.readyState === WebSocket.OPEN) c.send(msg);
     });
+    // Notificar al motor de física de stickers
+    if (typeof StickerServer !== 'undefined') StickerServer.onBeat(intensity);
   }
 
   function processPCM(buf) {
@@ -435,6 +437,263 @@ const BeatAnalyzer = (() => {
   return { start, stop };
 })();
 
+// ── Sticker Server ────────────────────────────────────────────────────────────
+// Motor de física autorizado para los stickers. Todos los clientes reciben el
+// mismo estado sincronizado. La física y las colisiones corren en el servidor.
+// Coordenadas en espacio virtual 1920×1080 px (los clientes escalan al renderizar).
+const StickerServer = (() => {
+  const VIRTUAL_W    = 1920;
+  const VIRTUAL_H    = 1080;
+  const COUNT        = 4;
+  const BASE_SIZE    = 90;
+  const FRICTION     = 0.985;
+  const BOUNCE_DAMP  = 0.78;
+  const MAX_SPEED    = 1600;
+  const IDLE_SPEED   = 40;
+  const PLAY_SPEED   = 100;
+  const BEAT_IMPULSE = 55;
+  const MAX_LIVES    = 5;
+  const INVINCIBLE_MS = 5000;
+  const TICK_MS      = 50; // 20 fps
+
+  let stickers   = [];
+  let gifUrls    = [];
+  let intervalId = null;
+  let playing    = false;
+  let nextId     = 0;
+  let nextClientId = 0;
+
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function loadGifs() {
+    try {
+      const dir   = path.join(__dirname, 'public', 'gifts');
+      const files = fs.readdirSync(dir).filter(f => /\.gif$/i.test(f));
+      gifUrls = files.map(f => `/gifts/${encodeURIComponent(f)}`);
+    } catch (_) { gifUrls = []; }
+  }
+
+  function makeSticker(url) {
+    const angle = rnd(0, Math.PI * 2);
+    return {
+      id:               nextId++,
+      gifUrl:           url,
+      cx:               rnd(BASE_SIZE, VIRTUAL_W - BASE_SIZE),
+      cy:               rnd(BASE_SIZE, VIRTUAL_H - BASE_SIZE),
+      vx:               Math.cos(angle) * IDLE_SPEED,
+      vy:               Math.sin(angle) * IDLE_SPEED,
+      size:             BASE_SIZE * rnd(0.85, 1.2),
+      hue:              Math.floor(rnd(0, 360)),
+      lives:            MAX_LIVES,
+      invincibleUntil:  0,
+      pulse:            0,
+      grabbedBy:        null, // ws._clientId
+    };
+  }
+
+  function broadcast(msg) {
+    const raw = JSON.stringify(msg);
+    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(raw); });
+  }
+
+  function broadcastState() {
+    const now = Date.now();
+    broadcast({
+      type: 'stickers',
+      stickers: stickers.map(s => ({
+        id:         s.id,
+        gifUrl:     s.gifUrl,
+        cx:         s.cx,
+        cy:         s.cy,
+        size:       s.size,
+        hue:        s.hue,
+        lives:      s.lives,
+        maxLives:   MAX_LIVES,
+        pulse:      s.pulse,
+        grabbed:    s.grabbedBy !== null,
+        invincible: now < s.invincibleUntil,
+      }))
+    });
+  }
+
+  function checkCollisions() {
+    const now = Date.now();
+    for (let i = 0; i < stickers.length; i++) {
+      for (let j = i + 1; j < stickers.length; j++) {
+        const a = stickers[i], b = stickers[j];
+        if (a.grabbedBy !== null || b.grabbedBy !== null) continue;
+        if (now < a.invincibleUntil || now < b.invincibleUntil)  continue;
+
+        const dx   = b.cx - a.cx, dy = b.cy - a.cy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+        const minD = (a.size + b.size) / 2;
+
+        if (dist < minD) {
+          // Quitar vida a ambos
+          a.lives = Math.max(0, a.lives - 1);
+          b.lives = Math.max(0, b.lives - 1);
+          a.invincibleUntil = now + INVINCIBLE_MS;
+          b.invincibleUntil = now + INVINCIBLE_MS;
+          a.pulse = 1.8; b.pulse = 1.8;
+
+          // Rebote elástico
+          const nx = dx / dist, ny = dy / dist;
+          const dv = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+          if (dv > 0) {
+            a.vx -= dv * nx; a.vy -= dv * ny;
+            b.vx += dv * nx; b.vy += dv * ny;
+          }
+          // Separar para que no se queden solapados
+          const overlap = (minD - dist) / 2;
+          a.cx -= overlap * nx; a.cy -= overlap * ny;
+          b.cx += overlap * nx; b.cy += overlap * ny;
+        }
+      }
+    }
+  }
+
+  function tick() {
+    const dt = TICK_MS / 1000;
+    const now = Date.now();
+
+    checkCollisions();
+
+    // Eliminar muertos
+    const countBefore = stickers.length;
+    stickers = stickers.filter(s => s.lives > 0);
+    const countAfter  = stickers.length;
+
+    // Cuando queda 1 → lo hacemos grande y avisamos
+    if (countAfter === 1 && countBefore > 1) {
+      stickers[0].size = BASE_SIZE * 2.8;
+      broadcast({ type: 'survivor', id: stickers[0].id });
+    }
+
+    stickers.forEach(s => {
+      if (s.grabbedBy !== null) {
+        s.pulse = Math.max(s.pulse * 0.96, 0.3);
+        return;
+      }
+
+      // Empuje mínimo si está casi parado
+      const spd = Math.hypot(s.vx, s.vy);
+      const tgt = playing ? PLAY_SPEED : IDLE_SPEED;
+      if (spd < tgt * 0.25) {
+        const dir = rnd(0, Math.PI * 2);
+        s.vx += Math.cos(dir) * tgt * 0.35;
+        s.vy += Math.sin(dir) * tgt * 0.35;
+      }
+
+      s.cx += s.vx * dt;
+      s.cy += s.vy * dt;
+      s.vx *= FRICTION;
+      s.vy *= FRICTION;
+
+      // Rebote en paredes (usando centro)
+      const r = s.size / 2;
+      let bounced = false;
+      if (s.cx - r < 0)          { s.cx = r;              s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+      if (s.cx + r > VIRTUAL_W)  { s.cx = VIRTUAL_W - r;  s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+      if (s.cy - r < 0)          { s.cy = r;              s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
+      if (s.cy + r > VIRTUAL_H)  { s.cy = VIRTUAL_H - r;  s.vy = -Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
+      if (bounced) { s.hue = (s.hue + Math.floor(rnd(50, 130))) % 360; s.pulse = Math.max(s.pulse, 0.5); }
+
+      s.pulse *= Math.pow(0.001, dt);
+    });
+
+    broadcastState();
+  }
+
+  // ── Mensajes de clientes ───────────────────────────────────────────────
+  function handleMessage(ws, raw) {
+    try {
+      const msg = JSON.parse(raw);
+      const cid = ws._clientId;
+      switch (msg.type) {
+        case 'grab': {
+          const s = stickers.find(s => s.id === msg.id && !s.grabbedBy);
+          if (s) { s.grabbedBy = cid; s.vx = 0; s.vy = 0; }
+          break;
+        }
+        case 'move': {
+          const s = stickers.find(s => s.id === msg.id && s.grabbedBy === cid);
+          if (s) {
+            s.cx = clamp(msg.cx, s.size / 2, VIRTUAL_W - s.size / 2);
+            s.cy = clamp(msg.cy, s.size / 2, VIRTUAL_H - s.size / 2);
+          }
+          break;
+        }
+        case 'release': {
+          const s = stickers.find(s => s.id === msg.id && s.grabbedBy === cid);
+          if (s) {
+            s.grabbedBy = null;
+            s.vx = clamp(msg.vx || 0, -MAX_SPEED, MAX_SPEED);
+            s.vy = clamp(msg.vy || 0, -MAX_SPEED, MAX_SPEED);
+          }
+          break;
+        }
+        case 'revive': revive(); break;
+      }
+    } catch (_) {}
+  }
+
+  function handleDisconnect(ws) {
+    stickers.forEach(s => {
+      if (s.grabbedBy === ws._clientId) { s.grabbedBy = null; s.vx = 0; s.vy = 0; }
+    });
+  }
+
+  function onBeat(intensity = 1.0) {
+    stickers.forEach(s => {
+      if (s.grabbedBy !== null) return;
+      s.pulse = Math.min(s.pulse + intensity * 0.8, 1.5);
+      const dir = rnd(0, Math.PI * 2);
+      s.vx += Math.cos(dir) * BEAT_IMPULSE * intensity;
+      s.vy += Math.sin(dir) * BEAT_IMPULSE * intensity;
+    });
+  }
+
+  function setPlaying(isPlaying) { playing = isPlaying; }
+
+  function revive() {
+    nextId = 0;
+    stickers = [];
+    for (let i = 0; i < COUNT; i++) {
+      stickers.push(makeSticker(gifUrls[i % gifUrls.length]));
+    }
+    broadcastState();
+    console.log('[StickerServer] Stickers revividos');
+  }
+
+  function assignClientId(ws) {
+    ws._clientId = nextClientId++;
+  }
+
+  function sendStateTo(ws) {
+    const now = Date.now();
+    ws.send(JSON.stringify({
+      type: 'stickers',
+      stickers: stickers.map(s => ({
+        id: s.id, gifUrl: s.gifUrl, cx: s.cx, cy: s.cy, size: s.size,
+        hue: s.hue, lives: s.lives, maxLives: MAX_LIVES, pulse: s.pulse,
+        grabbed: s.grabbedBy !== null, invincible: now < s.invincibleUntil,
+      }))
+    }));
+  }
+
+  function init() {
+    loadGifs();
+    if (!gifUrls.length) { console.warn('[StickerServer] Sin GIFs'); return; }
+    revive();
+    intervalId = setInterval(tick, TICK_MS);
+    console.log(`[StickerServer] Iniciado con ${COUNT} stickers`);
+  }
+
+  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive };
+})();
+
 // Broadcast a todos los clientes conectados
 function broadcastStatus() {
   // Calcular tiempo transcurrido si está reproduciendo
@@ -466,33 +725,28 @@ function broadcastStatus() {
 
 wss.on('connection', (ws) => {
   activeConnections++;
-  console.log(`Cliente WebSocket conectado (${activeConnections} activos)`);
+  StickerServer.assignClientId(ws);
+  console.log(`Cliente WebSocket conectado (${activeConnections} activos, id=${ws._clientId})`);
 
   // Enviar estado actual al conectarse
   ws.send(JSON.stringify({
     type: 'status',
-    data: {
-      currentSong,
-      queue,
-      queueLength: queue.length,
-      audioDevice: savedAudioDevice
-    }
+    data: { currentSong, queue, queueLength: queue.length, audioDevice: savedAudioDevice }
   }));
-
-  // Enviar configuración del servidor
   ws.send(JSON.stringify({
     type: 'config',
-    data: {
-      backendUrl: serverConfig.backendUrl,
-      audioDevice: serverConfig.audioDevice || savedAudioDevice
-    }
+    data: { backendUrl: serverConfig.backendUrl, audioDevice: serverConfig.audioDevice || savedAudioDevice }
   }));
+  // Enviar estado de stickers al nuevo cliente
+  StickerServer.sendStateTo(ws);
 
-  // Cuando un cliente se desconecta, solo registrar (la música sigue sonando)
+  // Mensajes del cliente → StickerServer (grab, move, release, revive)
+  ws.on('message', (data) => StickerServer.handleMessage(ws, data));
+
   ws.on('close', () => {
     activeConnections--;
+    StickerServer.handleDisconnect(ws);
     console.log(`Cliente WebSocket desconectado (${activeConnections} activos)`);
-    // La música sigue reproduciéndose aunque no haya clientes conectados
   });
 });
 
@@ -530,6 +784,7 @@ function stopCurrentPlayback(skipBroadcast = false, isManualStop = true) {
   }
 
   BeatAnalyzer.stop();
+  StickerServer.setPlaying(false);
 
   currentSong.status = 'stopped';
   currentSong.title = 'Ninguna';
@@ -605,6 +860,7 @@ async function playWithMPV(url, audioDevice, title = null) {
       currentSong.startedAt = Date.now();
       broadcastStatus();
       BeatAnalyzer.start(url);
+      StickerServer.setPlaying(true);
       
       // Ruta del IPC: named pipe en Windows, socket Unix en Linux/Mac
       const ipcPath = process.platform === 'win32' ? 'mpvdj' : '/tmp/mpvdj.sock';
@@ -1365,6 +1621,7 @@ app.get('/api/audio-devices', async (req, res) => {
 // Cargar estado y configuración al iniciar
 loadServerConfig();
 loadState();
+StickerServer.init();
 
 // Sincronizar audioDevice entre config y state
 if (serverConfig.audioDevice) {

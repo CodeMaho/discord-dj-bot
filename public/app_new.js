@@ -208,7 +208,8 @@ const elements = {
     currentBackendUrl: document.getElementById('currentBackendUrl'),
     settingsToggle: document.getElementById('settingsToggle'),
     settingsPanel: document.getElementById('settingsPanel'),
-    pauseResumeBtn: document.getElementById('pauseResumeBtn')
+    pauseResumeBtn: document.getElementById('pauseResumeBtn'),
+    reviveBtn: document.getElementById('reviveBtn')
 };
 
 // ============================================
@@ -216,247 +217,162 @@ const elements = {
 // ============================================
 
 // ============================================
-// BOUNCING STICKERS — estilo DVD logo
-// Los stickers rebotan por la pantalla y reaccionan al ritmo de la música.
-// El servidor analiza el audio con ffmpeg y emite eventos beat por WebSocket.
-// Todos los clientes (locales y remotos) reciben los mismos beats simultáneamente.
-// Los stickers se pueden agarrar y lanzar con el ratón.
+// BOUNCING STICKERS — server-driven
+// El servidor (StickerServer) es la única autoridad de física, colisiones y vidas.
+// El cliente solo renderiza el estado recibido por WebSocket y envía eventos de
+// grab/move/release. Todos los clientes ven exactamente lo mismo.
 // ============================================
 
+const STICKER_VW = 1920, STICKER_VH = 1080;  // espacio virtual del servidor
+
 const StickersSystem = (() => {
-    // ── Configuración física ──────────────────────────────────────────────
-    const COUNT        = 4;      // stickers simultáneos
-    const BASE_SIZE    = 90;     // tamaño base px
-    const FRICTION     = 0.988;  // rozamiento por frame (~62% velocidad tras 1s)
-    const BOUNCE_DAMP  = 0.78;   // energía conservada en rebote
-    const MAX_SPEED    = 1600;   // px/s máximo (lanzamiento fuerte)
-    const IDLE_SPEED   = 40;     // velocidad mínima en reposo
-    const PLAY_SPEED   = 100;    // velocidad mínima con música
-    const BEAT_IMPULSE = 55;     // px/s añadidos en cada beat
+    let overlay   = null;
+    let els       = {};        // id → { img, livesEl, wrapper }
+    let grabbedId = null;
+    const mouseHistory = [];   // {x, y, t} últimos 80ms
 
-    let overlay  = null;
-    let stickers = [];
-    let gifUrls  = [];
-    let rafId    = null;
-    let lastTime = 0;
-    let playing  = false;
-
-    let simulTimer = 0;   // temporizador BPM simulado (fallback si ffmpeg no está)
-
-    // ── Drag / throw ──────────────────────────────────────────────────────
-    let grabbedSticker = null;
-    const mouseHistory = [];    // {x, y, t} últimos 80ms
-
-    // ── Helpers ───────────────────────────────────────────────────────────
-    function rnd(a, b) { return a + Math.random() * (b - a); }
-    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-    // ── Eventos globales de ratón (para drag fuera del sticker) ───────────
-    document.addEventListener('mousemove', (e) => {
-        const now = performance.now();
-        mouseHistory.push({ x: e.clientX, y: e.clientY, t: now });
-        while (mouseHistory.length > 1 && now - mouseHistory[0].t > 80) mouseHistory.shift();
-        if (grabbedSticker) {
-            grabbedSticker.cx = e.clientX - grabbedSticker.grabOffX;
-            grabbedSticker.cy = e.clientY - grabbedSticker.grabOffY;
-        }
-    });
-
-    document.addEventListener('mouseup', () => {
-        if (!grabbedSticker) return;
-        const s = grabbedSticker;
-        // Calcular velocidad de lanzamiento desde historial de ratón
-        if (mouseHistory.length >= 2) {
-            const a  = mouseHistory[0];
-            const b  = mouseHistory[mouseHistory.length - 1];
-            const dt = (b.t - a.t) / 1000;
-            if (dt > 0.005) {
-                s.vx = clamp((b.x - a.x) / dt, -MAX_SPEED, MAX_SPEED);
-                s.vy = clamp((b.y - a.y) / dt, -MAX_SPEED, MAX_SPEED);
-            } else {
-                s.vx = 0; s.vy = 0;
-            }
-        }
-        s.grabbed          = false;
-        s.el.style.cursor  = 'grab';
-        s.el.style.zIndex  = '';
-        grabbedSticker     = null;
-    });
-
-    // ── Cargar GIFs ───────────────────────────────────────────────────────
-    async function loadGifs() {
-        try {
-            const res  = await fetch(`${getBackendUrl()}/api/gifs`);
-            const data = await res.json();
-            gifUrls    = data.gifs || [];
-        } catch (e) {
-            console.warn('[Stickers] No se pudieron cargar GIFs:', e.message);
-        }
-    }
-
-    // ── Crear overlay ─────────────────────────────────────────────────────
-    function createOverlay() {
+    // ── Overlay ───────────────────────────────────────────────────────────
+    function ensureOverlay() {
         overlay = document.getElementById('stickers-overlay');
         if (!overlay) {
             overlay    = document.createElement('div');
             overlay.id = 'stickers-overlay';
             document.body.appendChild(overlay);
         }
-        overlay.innerHTML = '';
     }
 
-    // ── Crear sticker ─────────────────────────────────────────────────────
-    function makeSticker(url) {
-        const size  = Math.round(rnd(BASE_SIZE - 15, BASE_SIZE + 20));
-        const angle = rnd(0, Math.PI * 2);
-        const el    = document.createElement('img');
-        el.src       = url;
-        el.className = 'sticker';
-        el.style.width  = size + 'px';
-        el.style.height = size + 'px';
-        overlay.appendChild(el);
+    // ── Crear/obtener elemento para un sticker ────────────────────────────
+    function getOrCreate(id, url) {
+        if (els[id]) return els[id];  // URL de GIF no cambia para un ID dado
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;';
 
-        const s = {
-            el,
-            cx:       rnd(size / 2, window.innerWidth  - size / 2),
-            cy:       rnd(size / 2, window.innerHeight - size / 2),
-            vx:       Math.cos(angle) * IDLE_SPEED,
-            vy:       Math.sin(angle) * IDLE_SPEED,
-            size,
-            pulse:    0,
-            hue:      Math.floor(rnd(0, 360)),
-            grabbed:  false,
-            grabOffX: 0,
-            grabOffY: 0,
-        };
+        const livesEl = document.createElement('div');
+        livesEl.className = 'sticker-lives';
 
-        el.addEventListener('mousedown', (e) => {
+        const img = document.createElement('img');
+        img.src       = url;
+        img.className = 'sticker';
+        img.draggable = false;
+
+        wrapper.appendChild(livesEl);
+        wrapper.appendChild(img);
+        overlay.appendChild(wrapper);
+
+        img.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            s.grabbed      = true;
-            grabbedSticker = s;
-            s.vx = 0; s.vy = 0;
-            s.grabOffX     = e.clientX - s.cx;
-            s.grabOffY     = e.clientY - s.cy;
+            grabbedId = id;
             mouseHistory.length = 0;
-            el.style.cursor = 'grabbing';
-            el.style.zIndex = '9999';
+            sendToServer({ type: 'grab', id });
         });
 
-        return s;
+        els[id] = { img, livesEl, wrapper };
+        return els[id];
     }
 
-    // ── Reacción al beat ──────────────────────────────────────────────────
-    // Llamado por el servidor vía WebSocket (beat real) o por el simulador (fallback)
-    function onBeat(intensity = 1.0) {
-        stickers.forEach(s => {
-            if (s.grabbed) return;
-            s.pulse = Math.min(s.pulse + intensity * 0.8, 1.5);
-            const dir = rnd(0, Math.PI * 2);
-            s.vx += Math.cos(dir) * BEAT_IMPULSE * intensity;
-            s.vy += Math.sin(dir) * BEAT_IMPULSE * intensity;
-        });
-    }
-
-    // ── Aplicar transform al DOM ──────────────────────────────────────────
-    function applyTransform(s) {
-        const scale = 1 + s.pulse * 0.45;
-        const glow  = 2 + s.pulse * 22;
-        const alpha = 0.15 + s.pulse * 0.85;
-        const tx    = (s.cx - s.size / 2).toFixed(1);
-        const ty    = (s.cy - s.size / 2).toFixed(1);
-        s.el.style.transform = `translate(${tx}px, ${ty}px) scale(${scale.toFixed(3)})`;
-        s.el.style.filter    =
-            `hue-rotate(${s.hue}deg) ` +
-            `drop-shadow(0 0 ${glow.toFixed(1)}px rgba(255,255,255,${alpha.toFixed(2)}))`;
-    }
-
-    // ── Loop principal (rAF) ──────────────────────────────────────────────
-    function loop(now) {
-        const dt = Math.min((now - lastTime) / 1000, 0.05);
-        lastTime = now;
-        const W = window.innerWidth;
-        const H = window.innerHeight;
-
-        // BPM simulado como fallback (el servidor manda beats reales si ffmpeg está disponible)
-        if (playing && now - simulTimer >= 500) {
-            simulTimer = now;
-            onBeat(1.0);
+    // ── Enviar mensaje al servidor via WebSocket ───────────────────────────
+    function sendToServer(data) {
+        if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(data));
         }
+    }
+
+    // ── Eventos globales de ratón ─────────────────────────────────────────
+    document.addEventListener('mousemove', (e) => {
+        const now = performance.now();
+        mouseHistory.push({ x: e.clientX, y: e.clientY, t: now });
+        while (mouseHistory.length > 1 && now - mouseHistory[0].t > 80) mouseHistory.shift();
+        if (grabbedId !== null) {
+            const W = window.innerWidth, H = window.innerHeight;
+            sendToServer({
+                type: 'move',
+                id:   grabbedId,
+                cx:   (e.clientX / W) * STICKER_VW,
+                cy:   (e.clientY / H) * STICKER_VH,
+            });
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (grabbedId === null) return;
+        const id = grabbedId;
+        grabbedId = null;
+        const W = window.innerWidth, H = window.innerHeight;
+        let vx = 0, vy = 0;
+        if (mouseHistory.length >= 2) {
+            const a  = mouseHistory[0];
+            const b  = mouseHistory[mouseHistory.length - 1];
+            const dt = (b.t - a.t) / 1000;
+            if (dt > 0.005) {
+                const maxSpd = 1600;
+                vx = Math.max(-maxSpd, Math.min(maxSpd, ((b.x - a.x) / dt) * (STICKER_VW / W)));
+                vy = Math.max(-maxSpd, Math.min(maxSpd, ((b.y - a.y) / dt) * (STICKER_VH / H)));
+            }
+        }
+        sendToServer({ type: 'release', id, vx, vy });
+    });
+
+    // ── Renderizar estado del servidor ────────────────────────────────────
+    function render(stickers) {
+        if (!overlay) return;
+        const W         = window.innerWidth;
+        const H         = window.innerHeight;
+        const scaleX    = W / STICKER_VW;
+        const scaleY    = H / STICKER_VH;
+        const sizeScale = Math.min(scaleX, scaleY);
+        const activeIds = new Set();
+        const MAX_LIVES = 5;
 
         stickers.forEach(s => {
-            if (s.grabbed) {
-                s.pulse = Math.max(s.pulse * 0.97, 0.3);
-                applyTransform(s);
-                return;
+            activeIds.add(s.id);
+            const { img, livesEl, wrapper } = getOrCreate(s.id, s.gifUrl);
+            const pxSize = s.size * sizeScale;  // el servidor ya ajusta el size del superviviente
+            const pxCx   = s.cx * scaleX;
+            const pxCy   = s.cy * scaleY;
+
+            wrapper.style.transform = `translate(${(pxCx - pxSize / 2).toFixed(1)}px, ${(pxCy - pxSize / 2).toFixed(1)}px)`;
+            img.style.width         = pxSize + 'px';
+            img.style.height        = pxSize + 'px';
+            img.style.cursor        = s.grabbed ? 'grabbing' : 'grab';
+            img.style.pointerEvents = 'auto';
+
+            if (s.invincible) {
+                img.classList.add('invincible');
+            } else {
+                img.classList.remove('invincible');
             }
 
-            // Empuje suave si va muy lento (tras decelerar)
-            const curSpd    = Math.hypot(s.vx, s.vy);
-            const targetSpd = playing ? PLAY_SPEED : IDLE_SPEED;
-            if (curSpd < targetSpd * 0.25) {
-                const dir = rnd(0, Math.PI * 2);
-                s.vx += Math.cos(dir) * targetSpd * 0.3;
-                s.vy += Math.sin(dir) * targetSpd * 0.3;
-            }
-
-            // Física
-            s.cx += s.vx * dt;
-            s.cy += s.vy * dt;
-            s.vx *= FRICTION;
-            s.vy *= FRICTION;
-
-            // Rebote (basado en centro)
-            const r = s.size / 2;
-            let bounced = false;
-            if (s.cx - r < 0)  { s.cx = r;     s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
-            if (s.cx + r > W)  { s.cx = W - r; s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
-            if (s.cy - r < 0)  { s.cy = r;     s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
-            if (s.cy + r > H)  { s.cy = H - r; s.vy = -Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
-
-            if (bounced) {
-                s.hue   = (s.hue + Math.floor(rnd(50, 130))) % 360;
-                s.pulse = Math.max(s.pulse, 0.5);
-            }
-
-            // Decaída del pulso
-            s.pulse *= Math.pow(0.001, dt);
-            applyTransform(s);
+            // Corazones de vidas (ocultar si es el único superviviente)
+            const isSurvivor = stickers.length === 1;
+            const hearts = '❤️'.repeat(Math.max(0, s.lives)) + '🖤'.repeat(Math.max(0, MAX_LIVES - s.lives));
+            livesEl.textContent   = hearts;
+            livesEl.style.display = isSurvivor ? 'none' : '';
         });
 
-        rafId = requestAnimationFrame(loop);
+        // Eliminar stickers muertos (convertir clave a número para comparar con Set)
+        Object.keys(els).forEach(strId => {
+            if (!activeIds.has(Number(strId))) {
+                els[strId].wrapper.remove();
+                delete els[strId];
+            }
+        });
     }
 
     // ── API pública ───────────────────────────────────────────────────────
-    async function init() {
-        await loadGifs();
-        if (!gifUrls.length) {
-            console.warn('[Stickers] Sin GIFs, sistema desactivado');
-            return;
-        }
-        createOverlay();
-        for (let i = 0; i < COUNT; i++) stickers.push(makeSticker(pick(gifUrls)));
-        lastTime = simulTimer = performance.now();
-        rafId = requestAnimationFrame(loop);
-        console.log(`[Stickers] ${COUNT} stickers activos (${gifUrls.length} GIFs)`);
+    function init() {
+        ensureOverlay();
+        console.log('[Stickers] Cliente inicializado, esperando estado del servidor...');
     }
 
-    function setPlaying(isPlaying) {
-        if (isPlaying === playing) return;
-        playing = isPlaying;
-        if (isPlaying) {
-            simulTimer = performance.now();
-            onBeat(1.2);
-        }
+    function onServerState(stickers) {
+        if (!overlay) ensureOverlay();
+        render(stickers);
     }
 
-    // Llamado desde el handler WebSocket cuando el servidor detecta un beat real
-    function onExternalBeat(intensity) {
-        simulTimer = performance.now() + 800; // evitar beat doble del simulador
-        onBeat(Math.min(intensity, 2.5));
-    }
+    function onExternalBeat() {}  // no-op: el servidor maneja la física de beats
+    function setPlaying()     {}  // no-op
 
-    return { init, setPlaying, onExternalBeat };
+    return { init, onServerState, onExternalBeat, setPlaying, sendToServer };
 })();
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -667,6 +583,15 @@ function initializeWebSocket() {
 
             if (data.type === 'beat') {
                 StickersSystem.onExternalBeat(data.intensity);
+            }
+
+            if (data.type === 'stickers') {
+                StickersSystem.onServerState(data.stickers);
+            }
+
+            if (data.type === 'survivor') {
+                // El render ya maneja el flag survivor en onServerState
+                console.log('[Stickers] ¡Último superviviente!', data.id);
             }
         } catch (error) {
             console.error('Error procesando mensaje WebSocket:', error);
@@ -1079,6 +1004,13 @@ function attachEventListeners() {
     // Botón pause/resume del now-playing
     if (elements.pauseResumeBtn) {
         elements.pauseResumeBtn.addEventListener('click', pauseResumeMedia);
+    }
+
+    // Botón revivir stickers (calavera)
+    if (elements.reviveBtn) {
+        elements.reviveBtn.addEventListener('click', () => {
+            StickersSystem.sendToServer({ type: 'revive' });
+        });
     }
 }
 
