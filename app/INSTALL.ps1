@@ -220,7 +220,38 @@ if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
 }
 
 # ============================================
-# 5. CLOUDFLARED
+# 5. FFMPEG
+# ============================================
+Write-Step "Verificando ffmpeg (analisis de audio / waveform)..."
+
+Refresh-EnvPath
+if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+    Write-OK "ffmpeg disponible: $((Get-Command ffmpeg).Source)"
+} else {
+    Write-Warn "ffmpeg no encontrado. Instalando via winget..."
+    winget install Gyan.FFmpeg --accept-source-agreements --accept-package-agreements
+    Refresh-EnvPath
+
+    if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+        Write-OK "ffmpeg instalado: $((Get-Command ffmpeg).Source)"
+    } else {
+        $ffmpegExe = Find-Exe @(
+            "$env:ProgramFiles\ffmpeg\bin\ffmpeg.exe",
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*ffmpeg*\ffmpeg.exe",
+            "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*Gyan*\bin\ffmpeg.exe"
+        )
+        if ($ffmpegExe) {
+            Add-ToUserPath -Dir $ffmpegExe.DirectoryName
+            Write-OK "ffmpeg encontrado y añadido al PATH: $($ffmpegExe.FullName)"
+        } else {
+            Write-Warn "ffmpeg instalado pero requiere reiniciar la terminal para activarse."
+            Write-Info "Sin ffmpeg el visualizador de ondas (waveform) no funcionara."
+        }
+    }
+}
+
+# ============================================
+# 6. CLOUDFLARED
 # ============================================
 Write-Step "Verificando Cloudflared (tunel de acceso remoto)..."
 
@@ -390,6 +421,13 @@ if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
     $summary += @{Name="yt-dlp     "; Status="OK  $(yt-dlp --version)"; Color="Green"}
 } else {
     $summary += @{Name="yt-dlp     "; Status="Instalado - reinicia la terminal"; Color="Yellow"}
+}
+
+# ffmpeg
+if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+    $summary += @{Name="ffmpeg     "; Status="OK  $((Get-Command ffmpeg).Source)"; Color="Green"}
+} else {
+    $summary += @{Name="ffmpeg     "; Status="Instalado - reinicia la terminal (waveform necesita ffmpeg)"; Color="Yellow"}
 }
 
 # Cloudflared

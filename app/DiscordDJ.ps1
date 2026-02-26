@@ -127,6 +127,15 @@ if (Get-Command yt-dlp -ErrorAction SilentlyContinue) {
     $missing.Add("yt-dlp")
 }
 
+# ffmpeg
+Write-Host "  ffmpeg       " -NoNewline
+if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+    Write-Host "OK" -ForegroundColor Green
+} else {
+    Write-Host "Sin instalar (waveform no funcionara)" -ForegroundColor Yellow
+    Write-Warn "ffmpeg no encontrado — instala con: winget install Gyan.FFmpeg"
+}
+
 # Cloudflared
 Write-Host "  Cloudflared  " -NoNewline
 if (Get-Command cloudflared -ErrorAction SilentlyContinue) {

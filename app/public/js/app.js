@@ -257,7 +257,7 @@ const StickersSystem = (() => {
         livesEl.className = 'sticker-lives';
 
         const img = document.createElement('img');
-        img.src       = url;
+        img.src       = url.startsWith('/') ? `${getBackendUrl()}${url}` : url;
         img.className = 'sticker';
         img.draggable = false;
 
@@ -504,7 +504,6 @@ const WaveformRenderer = (() => {
 
     // Recibe array de 64 enteros [0-255] del servidor
     function onData(bars) {
-        if (!playing) return;
         const inv = 1 / 255;
         for (let i = 0; i < Math.min(bars.length, BARS); i++) {
             target[i] = bars[i] * inv;
