@@ -116,7 +116,7 @@ git log --oneline !LOCAL_COMMIT!..origin/master 2>nul | findstr "." && (
 :: 4. ACTUALIZAR PAQUETES NPM
 :: ============================================
 
-if exist "package.json" (
+if exist "app\package.json" (
     echo  [*]  Actualizando paquetes npm...
     echo.
 
@@ -125,6 +125,7 @@ if exist "package.json" (
         echo  [!]  npm no encontrado. Instala Node.js o ejecuta DiscordDJ.exe
         echo       para que se instale automaticamente.
     ) else (
+        cd /d "%~dp0app"
         npm install --prefer-offline 2>&1
         if !ERRORLEVEL! NEQ 0 (
             npm install 2>&1
@@ -136,6 +137,7 @@ if exist "package.json" (
         ) else (
             echo  [OK] Paquetes npm actualizados.
         )
+        cd /d "%~dp0"
     )
     echo.
 )

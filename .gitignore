@@ -1,29 +1,28 @@
 # Dependencies
-node_modules/
+app/node_modules/
 
-# Config with secrets (but allow public/config.js for frontend)
-config.js
-!public/config.js
+# Config / state (generados en runtime, no van al repo)
+app/config/server-config.json
+app/data/player-state.json
+app/data/tunnel-url.txt
 
-# State files
-player-state.json
-server-config.json
-tunnel-url.txt
+# External binaries (demasiado grandes para git)
+app/tools/mpv/
+app/tools/vbcable/
 
-# External binaries
-mpv-*/
-VBCABLE_Driver_Pack45/
+# Ejecutable compilado (se regenera con BUILD-EXE.ps1)
+DiscordDJ.exe
 
-# Windows null file
+# Windows
 nul
+Thumbs.db
 
 # Logs
 *.log
 npm-debug.log*
 
-# OS files
+# OS
 .DS_Store
-Thumbs.db
 
 # IDE
 .vscode/

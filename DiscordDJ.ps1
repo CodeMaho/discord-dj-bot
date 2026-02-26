@@ -100,8 +100,8 @@ if (Get-Command mpv -ErrorAction SilentlyContinue) {
     Write-Host "OK  $mpvExe" -ForegroundColor Green
 } else {
     $found = Find-Exe @(
-        "$projectDir\mpv-x86_64-*\mpv.exe",
-        "$projectDir\mpv\mpv.exe",
+        "$projectDir\app\tools\mpv\mpv.exe",
+        "$projectDir\app\tools\mpv\mpv.com",
         "C:\Program Files\mpv\mpv.exe",
         "C:\mpv\mpv.exe",
         "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe"
@@ -148,7 +148,7 @@ if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
 
 # npm packages
 Write-Host "  npm packages " -NoNewline
-if (Test-Path "$projectDir\node_modules") {
+if (Test-Path "$projectDir\app\node_modules") {
     Write-Host "OK" -ForegroundColor Green
 } else {
     Write-Host "FALTA" -ForegroundColor Red
@@ -203,7 +203,7 @@ if ($missing.Count -gt 0) {
             Write-OK "MPV instalado: $mpvExe"
         } else {
             $found = Find-Exe @(
-                "$projectDir\mpv-x86_64-*\mpv.exe",
+                "$projectDir\app\tools\mpv\mpv.exe",
                 "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe",
                 "C:\Program Files\mpv\mpv.exe"
             )
@@ -267,6 +267,7 @@ if ($missing.Count -gt 0) {
                 Write-Warn "Politica ajustada solo para esta sesion (Bypass)"
             }
 
+            Set-Location "$projectDir\app"
             npm install
             if ($LASTEXITCODE -eq 0) {
                 Write-OK "npm packages instalados"
@@ -295,7 +296,7 @@ $canStart = $true
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue))       { Write-Err "Node.js no disponible"; $canStart = $false }
 if (-not (Get-Command mpv  -ErrorAction SilentlyContinue) -and -not $mpvExe) { Write-Err "MPV no disponible"; $canStart = $false }
-if (-not (Test-Path "$projectDir\node_modules"))                  { Write-Err "npm packages no instalados"; $canStart = $false }
+if (-not (Test-Path "$projectDir\app\node_modules"))              { Write-Err "npm packages no instalados"; $canStart = $false }
 
 if (-not $canStart) {
     Write-Host ""
@@ -314,7 +315,8 @@ Write-Info "Servidor en: http://localhost:3000"
 Write-Info "El tunel Cloudflare se iniciara automaticamente."
 Write-Host ""
 
-node "$projectDir\server.js"
+Set-Location "$projectDir\app"
+node "$projectDir\app\server.js"
 
 # Si node termina (por error o cierre inesperado), mostrar mensaje y esperar
 $exitCode = $LASTEXITCODE

@@ -11,9 +11,9 @@ const YTDlpWrap = require('yt-dlp-wrap').default;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const STATE_FILE = path.join(__dirname, 'player-state.json');
-const CONFIG_FILE = path.join(__dirname, 'server-config.json');
-const TUNNEL_URL_FILE = path.join(__dirname, 'tunnel-url.txt');
+const STATE_FILE      = path.join(__dirname, 'data',   'player-state.json');
+const CONFIG_FILE     = path.join(__dirname, 'config', 'server-config.json');
+const TUNNEL_URL_FILE = path.join(__dirname, 'data',   'tunnel-url.txt');
 
 // Variable global para la URL del túnel
 let tunnelUrl = '';
@@ -57,8 +57,8 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use(express.static('public'));
-// /gifts servido desde public/gifts (ya cubierto por express.static('public'))
+app.use(express.static(path.join(__dirname, 'public')));
+// /stickers servido desde public/stickers (ya cubierto por express.static)
 
 // Single instance de YTDlpWrap (evitar memory leaks)
 // Configurar para usar Node.js como runtime de JavaScript (requerido por YouTube)
@@ -589,9 +589,9 @@ const StickerServer = (() => {
 
   function loadGifs() {
     try {
-      const dir   = path.join(__dirname, 'public', 'gifts');
+      const dir   = path.join(__dirname, 'public', 'stickers');
       const files = fs.readdirSync(dir).filter(f => /\.gif$/i.test(f));
-      gifUrls = files.map(f => `/gifts/${encodeURIComponent(f)}`);
+      gifUrls = files.map(f => `/stickers/${encodeURIComponent(f)}`);
     } catch (_) { gifUrls = []; }
   }
 
@@ -1120,12 +1120,12 @@ async function playWithMPV(url, audioDevice, title = null) {
 
 // API Endpoints
 
-// GET: Listar GIFs disponibles en /gifts/
+// GET: Listar GIFs disponibles en /stickers/
 app.get('/api/gifs', (req, res) => {
-  const gifDir = path.join(__dirname, 'public', 'gifts');
+  const gifDir = path.join(__dirname, 'public', 'stickers');
   try {
     const files = fs.readdirSync(gifDir).filter(f => /\.gif$/i.test(f));
-    res.json({ gifs: files.map(f => `/gifts/${encodeURIComponent(f)}`) });
+    res.json({ gifs: files.map(f => `/stickers/${encodeURIComponent(f)}`) });
   } catch (e) {
     res.json({ gifs: [] });
   }
