@@ -454,13 +454,15 @@ const StickerServer = (() => {
   const BEAT_IMPULSE = 55;
   const MAX_LIVES    = 5;
   const INVINCIBLE_MS = 5000;
-  const TICK_MS      = 50; // 20 fps
+  const TICK_MS      = 50;  // física a 20 fps
+  const BCAST_EVERY  = 4;   // broadcast cada 4 ticks = 200 ms (5 fps) — reduce carga en túnel
 
-  let stickers   = [];
-  let gifUrls    = [];
-  let intervalId = null;
-  let playing    = false;
-  let nextId     = 0;
+  let stickers    = [];
+  let gifUrls     = [];
+  let intervalId  = null;
+  let playing     = false;
+  let nextId      = 0;
+  let tickCount   = 0;
   let nextClientId = 0;
 
   function rnd(a, b) { return a + Math.random() * (b - a); }
@@ -557,6 +559,7 @@ const StickerServer = (() => {
   function tick() {
     const dt = TICK_MS / 1000;
     const now = Date.now();
+    tickCount++;
 
     checkCollisions();
 
@@ -565,10 +568,12 @@ const StickerServer = (() => {
     stickers = stickers.filter(s => s.lives > 0);
     const countAfter  = stickers.length;
 
-    // Cuando queda 1 → lo hacemos grande y avisamos
+    // Cuando queda 1 → lo hacemos grande y avisamos (siempre broadcast inmediato)
     if (countAfter === 1 && countBefore > 1) {
       stickers[0].size = BASE_SIZE * 2.8;
       broadcast({ type: 'survivor', id: stickers[0].id });
+      broadcastState();  // broadcast inmediato al detectar superviviente
+      return;
     }
 
     stickers.forEach(s => {
@@ -603,7 +608,8 @@ const StickerServer = (() => {
       s.pulse *= Math.pow(0.001, dt);
     });
 
-    broadcastState();
+    // Broadcast de posiciones solo cada BCAST_EVERY ticks (5 fps) para no saturar el túnel
+    if (tickCount % BCAST_EVERY === 0) broadcastState();
   }
 
   // ── Mensajes de clientes ───────────────────────────────────────────────
@@ -723,9 +729,19 @@ function broadcastStatus() {
   saveState();
 }
 
+// Keepalive: ping a todos los clientes cada 30s para mantener vivas las conexiones
+// a través de proxies/túneles (Cloudflare tiene timeout de 100s de inactividad)
+setInterval(() => {
+  wss.clients.forEach(c => {
+    if (c.readyState === WebSocket.OPEN) c.ping();
+  });
+}, 30000);
+
 wss.on('connection', (ws) => {
   activeConnections++;
   StickerServer.assignClientId(ws);
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   console.log(`Cliente WebSocket conectado (${activeConnections} activos, id=${ws._clientId})`);
 
   // Enviar estado actual al conectarse

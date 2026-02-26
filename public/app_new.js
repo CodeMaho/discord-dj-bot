@@ -599,7 +599,10 @@ function initializeWebSocket() {
     };
     
     ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        const url = ws.url || wsUrl;
+        console.error(`[WebSocket] Fallo de conexión a: ${url}`);
+        console.error('[WebSocket] Causas comunes: túnel Cloudflare caído/cambiado, red del cliente bloqueando WSS, o servidor apagado.');
+        console.error('[WebSocket] Detalle:', error);
     };
     
     ws.onclose = () => {
@@ -617,8 +620,13 @@ function initializeWebSocket() {
                 initializeWebSocket();
             }, delay);
         } else {
-            console.error('Máximo de intentos de reconexión alcanzado');
-            showNotification('Error', 'No se pudo conectar al servidor', 'error');
+            console.error('Máximo de intentos de reconexión alcanzado — recargando URL del backend...');
+            showNotification('Reconectando', 'Buscando servidor actualizado...', 'info');
+            // Reintentar desde cero: re-obtener la URL del backend (puede haber cambiado)
+            setTimeout(async () => {
+                reconnectAttempts = 0;
+                await tryConnect();
+            }, 5000);
         }
     };
 }
