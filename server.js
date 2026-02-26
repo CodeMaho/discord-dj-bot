@@ -1414,44 +1414,61 @@ app.post('/api/pause-resume', async (req, res) => {
     return res.status(400).json({ error: 'No hay reproducción activa' });
   }
 
-  const isPaused  = currentSong.status === 'paused';
-  const ipcPipe   = process.platform === 'win32'
+  const isPaused = currentSong.status === 'paused';
+  const ipcPipe  = process.platform === 'win32'
     ? '\\\\.\\pipe\\mpvdj'
     : '/tmp/mpvdj.sock';
-  const command   = JSON.stringify({ command: ['set_property', 'pause', !isPaused] }) + '\n';
+  const command  = JSON.stringify({ command: ['set_property', 'pause', !isPaused] }) + '\n';
 
-  try {
-    await new Promise((resolve, reject) => {
+  // Intento único de conexión IPC con timeout configurable
+  function tryIPC(timeoutMs = 2500) {
+    return new Promise((resolve, reject) => {
       const client  = net.createConnection(ipcPipe);
-      const timeout = setTimeout(() => { client.destroy(); reject(new Error('timeout')); }, 1500);
+      const timer   = setTimeout(() => { client.destroy(); reject(new Error('timeout')); }, timeoutMs);
       client.on('connect', () => {
         client.write(command);
-        clearTimeout(timeout);
+        clearTimeout(timer);
         client.end();
         resolve();
       });
-      client.on('error', (err) => { clearTimeout(timeout); reject(err); });
+      client.on('error', (err) => { clearTimeout(timer); reject(err); });
     });
-
-    currentSong.status = isPaused ? 'playing' : 'paused';
-    if (!isPaused) {
-      // Al pausar: actualizar startedAt para que el tiempo transcurrido sea correcto al reanudar
-      currentSong.pausedAt = Date.now();
-    } else {
-      // Al reanudar: compensar el tiempo pausado
-      if (currentSong.pausedAt) {
-        currentSong.startedAt += Date.now() - currentSong.pausedAt;
-        delete currentSong.pausedAt;
-      }
-    }
-    // Sincronizar stickers con el estado de pausa/reanuda
-    StickerServer.setPlaying(isPaused); // isPaused=true → reanudando, isPaused=false → pausando
-
-    broadcastStatus();
-    res.json({ success: true, status: currentSong.status });
-  } catch (e) {
-    res.status(500).json({ error: 'No se pudo comunicar con MPV: ' + e.message });
   }
+
+  // Reintentar hasta 3 veces (MPV puede tardar un momento en tener el IPC listo)
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 400)); // esperar 400ms entre intentos
+      await tryIPC();
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[pause-resume] Intento ${attempt + 1}/3 fallido: ${e.message}`);
+    }
+  }
+
+  if (lastErr) {
+    return res.status(500).json({ error: 'No se pudo comunicar con MPV: ' + lastErr.message });
+  }
+
+  currentSong.status = isPaused ? 'playing' : 'paused';
+  if (!isPaused) {
+    // Al pausar: guardar momento para compensar el tiempo pausado al reanudar
+    currentSong.pausedAt = Date.now();
+  } else {
+    // Al reanudar: compensar el tiempo pausado en startedAt
+    if (currentSong.pausedAt) {
+      currentSong.startedAt += Date.now() - currentSong.pausedAt;
+      delete currentSong.pausedAt;
+    }
+  }
+  // Sincronizar stickers con el estado de pausa/reanuda
+  StickerServer.setPlaying(isPaused); // isPaused=true → reanudando, isPaused=false → pausando
+
+  broadcastStatus();
+  res.json({ success: true, status: currentSong.status });
 });
 
 // POST: Saltar a la siguiente canción
