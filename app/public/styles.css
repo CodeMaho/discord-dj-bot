@@ -848,7 +848,6 @@ select:focus {
     cursor: grab;
     transform-origin: center center;
     will-change: transform, filter;
-    transition: filter 0.45s ease-out;  /* desvanecimiento suave del glow de beat */
 }
 .sticker:active {
     cursor: grabbing;

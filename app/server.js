@@ -239,7 +239,7 @@ let cachedAudioDevices = []; // Cache de dispositivos de audio
 function loadAudioDevices() {
   return new Promise((resolve) => {
     console.log('[Audio-Devices] Cargando dispositivos...');
-    const mpvProcess = spawn('mpv', ['--audio-device=help'], { shell: true });
+    const mpvProcess = spawn('mpv', ['--audio-device=help']);
 
     let output = '';
     let errorOutput = '';
@@ -360,8 +360,8 @@ const BeatAnalyzer = (() => {
   const SAMPLE_RATE   = 11025;
   const CHUNK_SAMPLES = 512;
   const CHUNK_BYTES   = CHUNK_SAMPLES * 2;
-  const THRESHOLD     = 1.42;
-  const COOLDOWN_MS   = 190;
+  const THRESHOLD     = 1.15;
+  const COOLDOWN_MS   = 120;
   const WAVEFORM_BARS = 64;
 
   // ── Observador de posición MPV ────────────────────────────────────────
@@ -1055,7 +1055,7 @@ async function playWithMPV(url, audioDevice, title = null) {
       console.log('Dispositivo:', audioDevice);
       console.log('Argumentos MPV:', mpvArgs);
 
-      const thisProcess = spawn('mpv', mpvArgs, { shell: true });
+      const thisProcess = spawn('mpv', mpvArgs);
       currentProcess = thisProcess;
       isStartingPlayback = false; // Liberar lock una vez que el proceso inició
 

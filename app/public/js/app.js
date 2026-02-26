@@ -456,16 +456,21 @@ const StickersSystem = (() => {
     // se aplica un drop-shadow CSS que se desvanece en ~400ms.
     function onExternalBeat(intensity = 1.0) {
         const strength = Math.min(intensity, 3.0);
-        const blurPx   = Math.round(10 + strength * 14);   // 10–52 px
-        const spread   = Math.round(2  + strength * 4);    // 2–14 px
+        const blurPx   = Math.round(12 + strength * 16);   // 12–60 px
+        const spread   = Math.round(3  + strength * 5);    // 3–18 px
         Object.entries(stickersData).forEach(([strId, s]) => {
             const entry = els[strId];
             if (!entry) return;
             const hue   = s.hue || 0;
-            const alpha = Math.min(0.65 + strength * 0.15, 1.0);
-            entry.img.style.filter = `drop-shadow(0 0 ${blurPx}px hsla(${hue},100%,70%,${alpha})) drop-shadow(0 0 ${spread}px hsla(${hue},100%,90%,0.9))`;
+            const alpha = Math.min(0.70 + strength * 0.10, 1.0);
+            // Glow instantáneo en el beat, fade-out suave después
+            entry.img.style.transition = 'none';
+            entry.img.style.filter = `drop-shadow(0 0 ${blurPx}px hsla(${hue},100%,70%,${alpha})) drop-shadow(0 0 ${spread}px hsla(${hue},100%,95%,1.0))`;
             clearTimeout(entry.img._glowTimer);
-            entry.img._glowTimer = setTimeout(() => { entry.img.style.filter = ''; }, 450);
+            entry.img._glowTimer = setTimeout(() => {
+                entry.img.style.transition = 'filter 0.5s ease-out';
+                entry.img.style.filter = '';
+            }, 80);
         });
     }
 
