@@ -809,6 +809,20 @@ select:focus {
 }
 
 /* ============================================
+   WAVEFORM CANVAS
+   ============================================ */
+
+.waveform-canvas {
+    display: block;
+    width: 100%;
+    height: 56px;
+    margin-top: 10px;
+    border-radius: 6px;
+    /* Sutil halo oscuro para separarlo del fondo */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* ============================================
    BOUNCING STICKERS (estilo DVD logo)
    ============================================ */
 

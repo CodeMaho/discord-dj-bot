@@ -474,6 +474,95 @@ const StickersSystem = (() => {
     return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();
 
+// ============================================
+// WAVEFORM RENDERER
+// Visualiza en canvas la amplitud PCM enviada por el servidor vía WebSocket.
+// Corre a 60fps con interpolación suave; cuando no hay música baja a cero.
+// ============================================
+const WaveformRenderer = (() => {
+    const BARS = 64;
+    let canvas = null, ctx = null;
+    let current  = new Float32Array(BARS).fill(0);  // valores que se dibujan
+    let target   = new Float32Array(BARS).fill(0);  // valores objetivo
+    let rafId    = null;
+    let playing  = false;
+
+    function init() {
+        canvas = document.getElementById('waveformCanvas');
+        if (!canvas) return;
+        ctx = canvas.getContext('2d');
+        // Diferir resize hasta que el layout esté calculado
+        requestAnimationFrame(() => { resize(); startLoop(); });
+        window.addEventListener('resize', resize);
+    }
+
+    function resize() {
+        if (!canvas) return;
+        canvas.width  = canvas.clientWidth  || 560;
+        canvas.height = canvas.clientHeight || 56;
+    }
+
+    // Recibe array de 64 enteros [0-255] del servidor
+    function onData(bars) {
+        if (!playing) return;
+        const inv = 1 / 255;
+        for (let i = 0; i < Math.min(bars.length, BARS); i++) {
+            target[i] = bars[i] * inv;
+        }
+    }
+
+    function setPlaying(val) {
+        playing = val;
+        if (!val) target.fill(0);
+    }
+
+    function startLoop() {
+        if (rafId) return;
+        function frame() {
+            rafId = requestAnimationFrame(frame);
+            // Attack rápido (0.25) para que reaccione bien; decay más lento (0.15)
+            const lerpUp   = 0.25;
+            const lerpDown = 0.15;
+            for (let i = 0; i < BARS; i++) {
+                const diff = target[i] - current[i];
+                current[i] += diff * (diff > 0 ? lerpUp : lerpDown);
+            }
+            draw();
+        }
+        rafId = requestAnimationFrame(frame);
+    }
+
+    function draw() {
+        if (!ctx || !canvas) return;
+        const W = canvas.width;
+        const H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+
+        const barW  = W / BARS;
+        const gap   = Math.max(1, barW * 0.2);
+        const bW    = Math.max(1, barW - gap);
+        const half  = H / 2;
+        const maxAmp = half * 0.92;   // amplitud máxima = 92% del semialtura
+
+        // Gradiente vertical: azul Discord arriba/abajo, verde Discord en centro
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0,   'rgba(88,101,242,0.80)');
+        grad.addColorStop(0.5, 'rgba(87,242,135,0.95)');
+        grad.addColorStop(1,   'rgba(88,101,242,0.80)');
+        ctx.fillStyle = grad;
+
+        for (let i = 0; i < BARS; i++) {
+            const v    = current[i];
+            const barH = Math.max(2, v * maxAmp * 2);  // simétrico: sube y baja desde centro
+            const x    = i * barW + gap / 2;
+            const y    = half - barH / 2;
+            ctx.fillRect(x, y, bW, barH);
+        }
+    }
+
+    return { init, onData, setPlaying };
+})();
+
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('[Init] Iniciando...');
 
@@ -484,8 +573,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Intentar conectar
     await tryConnect();
 
-    // Iniciar stickers (no bloqueante, carga GIFs en background)
+    // Iniciar stickers y waveform
     StickersSystem.init();
+    WaveformRenderer.init();
 
     // Reintentar cargar config cada 10 segundos si no está conectado
     setInterval(async () => {
@@ -685,6 +775,10 @@ function initializeWebSocket() {
 
             if (data.type === 'beat') {
                 StickersSystem.onExternalBeat(data.intensity);
+            }
+
+            if (data.type === 'waveform') {
+                WaveformRenderer.onData(data.bars);
             }
 
             if (data.type === 'stickers') {
@@ -975,8 +1069,10 @@ function updateNowPlaying(song) {
         elements.pauseResumeBtn.title         = song.status === 'paused' ? 'Reanudar' : 'Pausar';
     }
 
-    // Sincronizar stickers con estado de reproducción
-    StickersSystem.setPlaying(song.status === 'playing');
+    // Sincronizar stickers y waveform con estado de reproducción
+    const isPlaying = song.status === 'playing';
+    StickersSystem.setPlaying(isPlaying);
+    WaveformRenderer.setPlaying(isPlaying);
 
     // Actualizar estado de botones
     updateButtonStates();

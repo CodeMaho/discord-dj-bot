@@ -335,17 +335,19 @@ function loadState() {
 // Analiza el audio en tiempo real (vía ffmpeg) y emite eventos beat por WS
 // a todos los clientes conectados para sincronizar los stickers.
 const BeatAnalyzer = (() => {
-  let proc       = null;
-  let audioBuf   = Buffer.alloc(0);
-  let avgEnergy  = 0;
-  let lastBeat   = 0;
-  let active     = false;
+  let proc         = null;
+  let audioBuf     = Buffer.alloc(0);
+  let avgEnergy    = 0;
+  let lastBeat     = 0;
+  let active       = false;
+  let wChunkCount  = 0;   // contador para throttle del waveform
 
   const SAMPLE_RATE   = 11025;       // Hz - suficiente para detectar graves
   const CHUNK_SAMPLES = 512;
   const CHUNK_BYTES   = CHUNK_SAMPLES * 2;  // int16le = 2 bytes por muestra
   const THRESHOLD     = 1.42;        // el beat tiene que ser X veces la media
   const COOLDOWN_MS   = 190;         // mínimo ms entre beats (~315 BPM máx)
+  const WAVEFORM_BARS = 64;          // barras del waveform
 
   function broadcastBeat(intensity) {
     if (currentSong.status !== 'playing') return; // no enviar beats cuando está pausado
@@ -355,6 +357,31 @@ const BeatAnalyzer = (() => {
     });
     // Notificar al motor de física de stickers
     if (typeof StickerServer !== 'undefined') StickerServer.onBeat(intensity);
+  }
+
+  // Calcula WAVEFORM_BARS valores de amplitud (RMS) a partir de un chunk PCM.
+  // Cada barra = RMS de (CHUNK_SAMPLES / WAVEFORM_BARS) muestras, escalado a [0,255].
+  function computeWaveformBars(chunk) {
+    const samplesPerBar = Math.floor(CHUNK_SAMPLES / WAVEFORM_BARS); // 8
+    const bars = new Array(WAVEFORM_BARS);
+    for (let b = 0; b < WAVEFORM_BARS; b++) {
+      let rms = 0;
+      const off = b * samplesPerBar * 2;
+      for (let i = 0; i < samplesPerBar; i++) {
+        const s = chunk.readInt16LE(off + i * 2) / 32768;
+        rms += s * s;
+      }
+      // Factor ×4.5 → música típica (RMS≈0.1–0.3) ocupa bien el rango [0,1]
+      bars[b] = Math.round(Math.min(Math.sqrt(rms / samplesPerBar) * 4.5, 1.0) * 255);
+    }
+    return bars;
+  }
+
+  // Emite waveform a todos los clientes (~10 fps: cada 2 chunks de 46 ms)
+  function broadcastWaveform(bars) {
+    if (currentSong.status !== 'playing') return;
+    const msg = JSON.stringify({ type: 'waveform', bars });
+    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
   }
 
   function processPCM(buf) {
@@ -377,6 +404,9 @@ const BeatAnalyzer = (() => {
         broadcastBeat(Math.min(energy / (avgEnergy || 0.001), 3.0));
       }
       avgEnergy = avgEnergy * 0.90 + energy * 0.10;
+
+      // Waveform: broadcast cada 2 chunks (~10.5 fps)
+      if (++wChunkCount % 2 === 0) broadcastWaveform(computeWaveformBars(chunk));
     }
   }
 
@@ -427,6 +457,7 @@ const BeatAnalyzer = (() => {
 
   function stop() {
     active = false;
+    wChunkCount = 0;
     if (proc) {
       try { proc.kill(); } catch (_) {}
       proc = null;
