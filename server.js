@@ -332,35 +332,116 @@ function loadState() {
 }
 
 // ── Beat Analyzer ─────────────────────────────────────────────────────────
-// Analiza el audio en tiempo real (vía ffmpeg) y emite eventos beat por WS
-// a todos los clientes conectados para sincronizar los stickers.
+// Analiza el audio en tiempo real (vía ffmpeg) y emite eventos beat y waveform.
+//
+// SINCRONIZACIÓN DE WAVEFORM:
+//   ffmpeg usa -re → procesa a velocidad 1x (no se adelanta).
+//   Aun así, ffmpeg arranca unos segundos ANTES de que MPV empiece a sonar
+//   (tiempo de buffering de MPV + latencia de yt-dlp).
+//   Para compensarlo se usa una cola de frames con timestamp de posición:
+//     · Un observador IPC mantiene currentSong.mpvActualPos actualizado en
+//       tiempo real (observe_property time-pos).
+//     · El dispatcher (setInterval 50 ms) solo emite los frames cuya posición
+//       ≤ posición actual de MPV, alineando el waveform con el audio real.
 const BeatAnalyzer = (() => {
-  let proc         = null;
-  let audioBuf     = Buffer.alloc(0);
-  let avgEnergy    = 0;
-  let lastBeat     = 0;
-  let active       = false;
-  let wChunkCount  = 0;   // contador para throttle del waveform
+  let proc           = null;
+  let audioBuf       = Buffer.alloc(0);
+  let avgEnergy      = 0;
+  let lastBeat       = 0;
+  let active         = false;
+  let wChunkCount    = 0;
+  let decodedSamples = 0;          // muestras decodificadas por ffmpeg
+  const waveformQueue = [];        // { pos (s), bars[] } pendientes de emitir
+  let dispatchId      = null;      // ID del setInterval del dispatcher
+  let mpvObsClient    = null;      // conexión IPC persistente a MPV
+  let mpvObsBuf       = '';
 
-  const SAMPLE_RATE   = 11025;       // Hz - suficiente para detectar graves
+  const SAMPLE_RATE   = 11025;
   const CHUNK_SAMPLES = 512;
-  const CHUNK_BYTES   = CHUNK_SAMPLES * 2;  // int16le = 2 bytes por muestra
-  const THRESHOLD     = 1.42;        // el beat tiene que ser X veces la media
-  const COOLDOWN_MS   = 190;         // mínimo ms entre beats (~315 BPM máx)
-  const WAVEFORM_BARS = 64;          // barras del waveform
+  const CHUNK_BYTES   = CHUNK_SAMPLES * 2;
+  const THRESHOLD     = 1.42;
+  const COOLDOWN_MS   = 190;
+  const WAVEFORM_BARS = 64;
 
-  function broadcastBeat(intensity) {
-    if (currentSong.status !== 'playing') return; // no enviar beats cuando está pausado
-    const msg = JSON.stringify({ type: 'beat', intensity });
-    wss.clients.forEach(c => {
-      if (c.readyState === WebSocket.OPEN) c.send(msg);
+  // ── Observador de posición MPV ────────────────────────────────────────
+  // Abre una conexión IPC persistente y suscribe observe_property time-pos.
+  // MPV envía actualizaciones automáticas cada vez que avanza la posición.
+  function startMpvObserver() {
+    if (mpvObsClient) return;
+    const pipe = process.platform === 'win32' ? '\\\\.\\pipe\\mpvdj' : '/tmp/mpvdj.sock';
+    mpvObsClient = net.createConnection(pipe);
+    mpvObsBuf = '';
+    mpvObsClient.on('connect', () => {
+      mpvObsClient.write(
+        JSON.stringify({ command: ['observe_property', 99, 'time-pos'] }) + '\n'
+      );
+      console.log('[BeatAnalyzer] Observador IPC conectado a MPV');
     });
-    // Notificar al motor de física de stickers
+    mpvObsClient.on('data', d => {
+      mpvObsBuf += d.toString();
+      const lines = mpvObsBuf.split('\n');
+      mpvObsBuf = lines.pop();  // conservar línea incompleta
+      for (const line of lines) {
+        try {
+          const ev = JSON.parse(line);
+          if (
+            ev.event === 'property-change' &&
+            ev.name  === 'time-pos' &&
+            typeof ev.data === 'number'
+          ) {
+            currentSong.mpvActualPos = ev.data;
+          }
+        } catch (_) {}
+      }
+    });
+    mpvObsClient.on('error', () => { mpvObsClient = null; });
+    mpvObsClient.on('close', () => { mpvObsClient = null; });
+  }
+
+  function stopMpvObserver() {
+    if (mpvObsClient) { try { mpvObsClient.destroy(); } catch (_) {} mpvObsClient = null; }
+    mpvObsBuf = '';
+    delete currentSong.mpvActualPos;
+  }
+
+  // ── Dispatcher de waveform ────────────────────────────────────────────
+  // Corre cada 50 ms y emite todos los frames cuya posición ≤ posición real de MPV.
+  // Si el observador IPC no ha conectado aún, usa el reloj de pared como fallback.
+  function startDispatcher() {
+    if (dispatchId) return;
+    dispatchId = setInterval(() => {
+      if (currentSong.status !== 'playing' || !wss) return;
+
+      const mpvPos = typeof currentSong.mpvActualPos === 'number'
+        ? currentSong.mpvActualPos
+        : Math.max(0, (Date.now() - (currentSong.startedAt || Date.now())) / 1000);
+
+      // Emitir todos los frames listos (+50 ms de tolerancia)
+      while (waveformQueue.length && waveformQueue[0].pos <= mpvPos + 0.05) {
+        const { bars } = waveformQueue.shift();
+        const msg = JSON.stringify({ type: 'waveform', bars });
+        wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
+      }
+
+      // Limitar cola a 60 s para no crecer indefinidamente durante pausas largas
+      const cap = 60 * 10;
+      if (waveformQueue.length > cap) waveformQueue.splice(0, waveformQueue.length - cap);
+    }, 50);
+  }
+
+  function stopDispatcher() {
+    if (dispatchId) { clearInterval(dispatchId); dispatchId = null; }
+  }
+
+  // ── Beat ──────────────────────────────────────────────────────────────
+  function broadcastBeat(intensity) {
+    if (currentSong.status !== 'playing') return;
+    const msg = JSON.stringify({ type: 'beat', intensity });
+    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
     if (typeof StickerServer !== 'undefined') StickerServer.onBeat(intensity);
   }
 
-  // Calcula WAVEFORM_BARS valores de amplitud (RMS) a partir de un chunk PCM.
-  // Cada barra = RMS de (CHUNK_SAMPLES / WAVEFORM_BARS) muestras, escalado a [0,255].
+  // ── Barras de amplitud ────────────────────────────────────────────────
   function computeWaveformBars(chunk) {
     const samplesPerBar = Math.floor(CHUNK_SAMPLES / WAVEFORM_BARS); // 8
     const bars = new Array(WAVEFORM_BARS);
@@ -371,33 +452,25 @@ const BeatAnalyzer = (() => {
         const s = chunk.readInt16LE(off + i * 2) / 32768;
         rms += s * s;
       }
-      // Factor ×4.5 → música típica (RMS≈0.1–0.3) ocupa bien el rango [0,1]
       bars[b] = Math.round(Math.min(Math.sqrt(rms / samplesPerBar) * 4.5, 1.0) * 255);
     }
     return bars;
   }
 
-  // Emite waveform a todos los clientes (~10 fps: cada 2 chunks de 46 ms)
-  function broadcastWaveform(bars) {
-    if (currentSong.status !== 'playing') return;
-    const msg = JSON.stringify({ type: 'waveform', bars });
-    wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
-  }
-
+  // ── Procesado PCM ─────────────────────────────────────────────────────
   function processPCM(buf) {
     audioBuf = Buffer.concat([audioBuf, buf]);
     while (audioBuf.length >= CHUNK_BYTES) {
       const chunk = audioBuf.slice(0, CHUNK_BYTES);
       audioBuf    = audioBuf.slice(CHUNK_BYTES);
 
-      // RMS de energía del chunk (16 bits signed LE)
+      // Beat detection
       let energy = 0;
       for (let i = 0; i < CHUNK_BYTES - 1; i += 2) {
         const s = chunk.readInt16LE(i) / 32768;
         energy += s * s;
       }
       energy = Math.sqrt(energy / CHUNK_SAMPLES);
-
       const now = Date.now();
       if (energy > avgEnergy * THRESHOLD && energy > 0.008 && now - lastBeat > COOLDOWN_MS) {
         lastBeat = now;
@@ -405,20 +478,32 @@ const BeatAnalyzer = (() => {
       }
       avgEnergy = avgEnergy * 0.90 + energy * 0.10;
 
-      // Waveform: broadcast cada 2 chunks (~10.5 fps)
-      if (++wChunkCount % 2 === 0) broadcastWaveform(computeWaveformBars(chunk));
+      // Waveform: encolar frame cada 2 chunks (~10 fps)
+      decodedSamples += CHUNK_SAMPLES;
+      if (++wChunkCount % 2 === 0) {
+        waveformQueue.push({
+          pos:  decodedSamples / SAMPLE_RATE,  // posición en segundos
+          bars: computeWaveformBars(chunk),
+        });
+      }
     }
   }
 
   async function start(url) {
     stop();
-    active    = true;
-    avgEnergy = 0;
-    lastBeat  = 0;
-    audioBuf  = Buffer.alloc(0);
+    active         = true;
+    avgEnergy      = 0;
+    lastBeat       = 0;
+    audioBuf       = Buffer.alloc(0);
+    wChunkCount    = 0;
+    decodedSamples = 0;
+    waveformQueue.length = 0;
+
+    startDispatcher();
+    // Esperar 1 s a que MPV cree el IPC pipe antes de conectar el observador
+    setTimeout(startMpvObserver, 1000);
 
     try {
-      // Obtener URL directa del audio (yt-dlp, misma lógica que MPV usa internamente)
       const raw = await ytDlpWrap.execPromise([
         url,
         '--get-url',
@@ -429,8 +514,9 @@ const BeatAnalyzer = (() => {
       const audioUrl = raw.trim().split('\n')[0];
       if (!audioUrl || !active) return;
 
-      // ffmpeg: decodifica el stream a PCM crudo de baja calidad (solo para análisis)
+      // -re: lee el stream a velocidad 1x para no adelantarse a MPV
       proc = spawn('ffmpeg', [
+        '-re',
         '-reconnect', '1', '-reconnect_streamed', '1',
         '-i', audioUrl,
         '-vn',
@@ -443,25 +529,26 @@ const BeatAnalyzer = (() => {
       proc.stderr.on('data', () => {});
       proc.on('error', err => {
         if (err.code === 'ENOENT') {
-          console.log('[BeatAnalyzer] ffmpeg no encontrado – usando BPM simulado en cliente');
+          console.log('[BeatAnalyzer] ffmpeg no encontrado — waveform no disponible');
         } else {
           console.error('[BeatAnalyzer]', err.message);
         }
       });
       proc.on('exit', () => { proc = null; });
-      console.log('[BeatAnalyzer] Análisis de audio iniciado');
+      console.log('[BeatAnalyzer] Análisis de audio iniciado (sincronización por IPC)');
     } catch (e) {
       console.error('[BeatAnalyzer] Error al iniciar:', e.message);
     }
   }
 
   function stop() {
-    active = false;
-    wChunkCount = 0;
-    if (proc) {
-      try { proc.kill(); } catch (_) {}
-      proc = null;
-    }
+    active         = false;
+    wChunkCount    = 0;
+    decodedSamples = 0;
+    waveformQueue.length = 0;
+    stopDispatcher();
+    stopMpvObserver();
+    if (proc) { try { proc.kill(); } catch (_) {} proc = null; }
     audioBuf = Buffer.alloc(0);
   }
 
