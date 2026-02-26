@@ -11,7 +11,9 @@ $projectDir = if ($PSScriptRoot -and (Test-Path $PSScriptRoot)) {
 } else {
     Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
 }
-Set-Location $projectDir
+# Auto-detect: exe compilado en raiz (app/ es subdirectorio) o ps1 ejecutado desde app/
+$appDir = if (Test-Path "$projectDir\app\server.js") { "$projectDir\app" } else { $projectDir }
+Set-Location $appDir
 
 # ============================================
 # HELPERS
@@ -100,8 +102,8 @@ if (Get-Command mpv -ErrorAction SilentlyContinue) {
     Write-Host "OK  $mpvExe" -ForegroundColor Green
 } else {
     $found = Find-Exe @(
-        "$projectDir\app\tools\mpv\mpv.exe",
-        "$projectDir\app\tools\mpv\mpv.com",
+        "$appDir\tools\mpv\mpv.exe",
+        "$appDir\tools\mpv\mpv.com",
         "C:\Program Files\mpv\mpv.exe",
         "C:\mpv\mpv.exe",
         "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe"
@@ -148,7 +150,7 @@ if (Get-Command cloudflared -ErrorAction SilentlyContinue) {
 
 # npm packages
 Write-Host "  npm packages " -NoNewline
-if (Test-Path "$projectDir\app\node_modules") {
+if (Test-Path "$appDir\node_modules") {
     Write-Host "OK" -ForegroundColor Green
 } else {
     Write-Host "FALTA" -ForegroundColor Red
@@ -203,7 +205,7 @@ if ($missing.Count -gt 0) {
             Write-OK "MPV instalado: $mpvExe"
         } else {
             $found = Find-Exe @(
-                "$projectDir\app\tools\mpv\mpv.exe",
+                "$appDir\tools\mpv\mpv.exe",
                 "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\*mpv*\mpv.exe",
                 "C:\Program Files\mpv\mpv.exe"
             )
@@ -267,7 +269,7 @@ if ($missing.Count -gt 0) {
                 Write-Warn "Politica ajustada solo para esta sesion (Bypass)"
             }
 
-            Set-Location "$projectDir\app"
+            Set-Location $appDir
             npm install
             if ($LASTEXITCODE -eq 0) {
                 Write-OK "npm packages instalados"
@@ -296,7 +298,7 @@ $canStart = $true
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue))       { Write-Err "Node.js no disponible"; $canStart = $false }
 if (-not (Get-Command mpv  -ErrorAction SilentlyContinue) -and -not $mpvExe) { Write-Err "MPV no disponible"; $canStart = $false }
-if (-not (Test-Path "$projectDir\app\node_modules"))              { Write-Err "npm packages no instalados"; $canStart = $false }
+if (-not (Test-Path "$appDir\node_modules"))              { Write-Err "npm packages no instalados"; $canStart = $false }
 
 if (-not $canStart) {
     Write-Host ""
@@ -315,8 +317,8 @@ Write-Info "Servidor en: http://localhost:3000"
 Write-Info "El tunel Cloudflare se iniciara automaticamente."
 Write-Host ""
 
-Set-Location "$projectDir\app"
-node "$projectDir\app\server.js"
+Set-Location $appDir
+node "$appDir\server.js"
 
 # Si node termina (por error o cierre inesperado), mostrar mensaje y esperar
 $exitCode = $LASTEXITCODE

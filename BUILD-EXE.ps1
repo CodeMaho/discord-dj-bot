@@ -39,7 +39,7 @@ Write-Host "  [OK] ps2exe disponible" -ForegroundColor Green
 
 Write-Host "[2/4] Verificando fuente..." -ForegroundColor Cyan
 
-$inputFile  = "$scriptDir\DiscordDJ.ps1"
+$inputFile  = "$scriptDir\app\DiscordDJ.ps1"
 $outputFile = "$scriptDir\DiscordDJ.exe"
 
 if (-not (Test-Path $inputFile)) {
@@ -56,8 +56,8 @@ Write-Host "  [OK] Fuente: $inputFile" -ForegroundColor Green
 
 Write-Host "[3/4] Procesando icono..." -ForegroundColor Cyan
 
-$jpgPath = "$scriptDir\brokIcon.jpg"
-$icoPath = "$scriptDir\brokIcon.ico"
+$jpgPath = "$scriptDir\app\brokIcon.jpg"
+$icoPath = "$scriptDir\app\brokIcon.ico"
 $iconArg = $null
 
 if (Test-Path $jpgPath) {

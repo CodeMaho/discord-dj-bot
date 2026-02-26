@@ -137,7 +137,7 @@ if (Get-Command mpv -ErrorAction SilentlyContinue) {
 
 # Paso 2: buscar build portable en la carpeta del proyecto (mpv-x86_64-*)
 if (-not $mpvExe) {
-    $localMpv = Find-Exe @("$projectDir\mpv-x86_64-*\mpv.exe", "$projectDir\mpv\mpv.exe")
+    $localMpv = Find-Exe @("$projectDir\tools\mpv\mpv.exe", "$projectDir\tools\mpv\mpv.com")
     if ($localMpv) {
         $mpvExe = $localMpv.FullName
         Write-OK "MPV portable encontrado localmente: $mpvExe"
@@ -296,7 +296,7 @@ if (-not $cableInstalled) {
 
 # Alternativa: buscar driver instalado en el proyecto
 if (-not $cableInstalled) {
-    $vbDriver = Find-Exe @("$projectDir\VBCABLE_Driver*\VBCABLE_Setup_x64.exe")
+    $vbDriver = Find-Exe @("$projectDir\tools\vbcable\VBCABLE_Setup_x64.exe")
     if ($vbDriver) {
         Write-Warn "VB-Cable NO detectado pero se encontro el instalador en el proyecto."
         Write-Info "Instalando VB-Cable automaticamente (requiere reinicio del PC)..."
