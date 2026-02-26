@@ -734,10 +734,10 @@ function updateConnectionStatus(connected) {
 
     if (connected) {
         elements.connectionStatus.classList.add('connected');
-        elements.connectionStatus.classList.remove('disconnected', 'connecting', 'polling');
+        elements.connectionStatus.classList.remove('disconnected', 'connecting', 'polling', 'offline');
         if (statusText) statusText.textContent = 'Conectado';
     } else {
-        elements.connectionStatus.classList.remove('connected', 'polling');
+        elements.connectionStatus.classList.remove('connected', 'polling', 'offline');
         elements.connectionStatus.classList.add('disconnected');
         if (statusText) statusText.textContent = 'Desconectado';
     }
@@ -755,41 +755,89 @@ function updateConnectionStatusConnecting() {
 function updateConnectionStatusPolling() {
     if (!elements.connectionStatus) return;
     const statusText = elements.connectionStatus.querySelector('.status-text');
-    elements.connectionStatus.classList.remove('connected', 'disconnected', 'connecting');
+    elements.connectionStatus.classList.remove('connected', 'disconnected', 'connecting', 'offline');
     elements.connectionStatus.classList.add('polling');
     if (statusText) statusText.textContent = 'Solo HTTP';
 }
 
-// Activar modo polling: WebSocket bloqueado, actualizamos estado cada 3s por HTTP
+function updateConnectionStatusOffline() {
+    if (!elements.connectionStatus) return;
+    const statusText = elements.connectionStatus.querySelector('.status-text');
+    elements.connectionStatus.classList.remove('connected', 'disconnected', 'connecting', 'polling');
+    elements.connectionStatus.classList.add('offline');
+    if (statusText) statusText.textContent = 'Servidor offline';
+}
+
+// Intentar obtener URL fresca del backend desde IONOS y, si cambió, reconectar
+async function tryRefreshAndReconnect() {
+    console.log('[Polling] URL posiblemente caducada — buscando URL actualizada en IONOS...');
+    const freshUrl = await loadBackendUrlFromHosting() || await loadBackendUrlFromJson();
+    if (freshUrl && freshUrl !== backendUrl) {
+        console.log('[Polling] Nueva URL detectada:', freshUrl);
+        backendUrl = freshUrl;
+        updateBackendUrlDisplay();
+        // Intentar reconectar WebSocket con la nueva URL
+        reconnectAttempts = MAX_RECONNECT_ATTEMPTS - 1;
+        initializeWebSocket();
+        return true;
+    }
+    return false;
+}
+
+// Activar modo polling: WebSocket bloqueado, actualizamos estado por HTTP
 async function startPollingFallback() {
     if (pollingMode) return;
     pollingMode = true;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     updateConnectionStatusPolling();
     showNotification('Modo HTTP', 'WebSocket bloqueado — controles funcionan, sin stickers en tiempo real', 'info');
-    console.log('[Polling] Modo HTTP activado (WebSocket bloqueado por red o firewall)');
+    console.log('[Polling] Modo HTTP activado');
 
-    // Cargar estado inmediatamente
-    try {
-        const res  = await fetch(`${getBackendUrl()}/api/status`);
-        const data = await res.json();
-        if (data) updateStatus(data);
-    } catch (_) {}
+    let consecutiveErrors  = 0;
+    let currentPollMs      = 3000;  // comienza rápido, se ralentiza si el servidor está offline
 
-    // Seguir actualizando el estado cada 3 segundos
-    pollingInterval = setInterval(async () => {
+    async function doPoll() {
+        if (!pollingMode) return;
         try {
-            const res  = await fetch(`${getBackendUrl()}/api/status`);
+            const res = await fetch(`${getBackendUrl()}/api/status`, { signal: AbortSignal.timeout(5000) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             if (data) updateStatus(data);
-        } catch (_) {}
-    }, 3000);
+            // Éxito: resetear errores y volver a intervalo rápido
+            if (consecutiveErrors > 0) {
+                consecutiveErrors = 0;
+                currentPollMs = 3000;
+                updateConnectionStatusPolling();
+                console.log('[Polling] Servidor accesible vía HTTP');
+            }
+        } catch (e) {
+            consecutiveErrors++;
+            console.warn(`[Polling] Error HTTP consecutivo #${consecutiveErrors}: ${e.message}`);
 
-    // Reintentar WebSocket discretamente cada 60s (1 solo intento para no hacer ruido)
-    wsRetryTimer = setInterval(() => {
+            if (consecutiveErrors === 3) {
+                // Puede que el túnel haya cambiado URL; intentar refrescar
+                const refreshed = await tryRefreshAndReconnect();
+                if (!refreshed) {
+                    // URL igual o PHP sin respuesta → servidor offline
+                    updateConnectionStatusOffline();
+                    currentPollMs = 30000;  // sondear cada 30s para no generar spam
+                    console.warn('[Polling] Servidor parece offline — reduciendo frecuencia a 30s');
+                }
+            }
+        }
+        // Reprogramar siguiendo el intervalo actual
+        if (pollingMode) pollingInterval = setTimeout(doPoll, currentPollMs);
+    }
+
+    // Primera llamada inmediata
+    pollingInterval = setTimeout(doPoll, 0);
+
+    // Intentar WebSocket + URL fresca cada 60s en segundo plano
+    wsRetryTimer = setInterval(async () => {
         if (!pollingMode) return;
         console.log('[Polling] Reintentando WebSocket en segundo plano...');
-        reconnectAttempts = MAX_RECONNECT_ATTEMPTS - 1;  // solo 1 intento
+        await tryRefreshAndReconnect();   // usar URL actualizada si existe
+        reconnectAttempts = MAX_RECONNECT_ATTEMPTS - 1;  // solo 1 intento WS
         initializeWebSocket();
     }, 60000);
 }
@@ -798,8 +846,9 @@ function stopPollingFallback() {
     if (!pollingMode) return;
     pollingMode  = false;
     wsFailCycles = 0;
-    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
-    if (wsRetryTimer)    { clearInterval(wsRetryTimer);    wsRetryTimer    = null; }
+    // pollingInterval es ahora un setTimeout, no setInterval
+    if (pollingInterval) { clearTimeout(pollingInterval); pollingInterval = null; }
+    if (wsRetryTimer)    { clearInterval(wsRetryTimer);   wsRetryTimer    = null; }
     console.log('[Polling] WebSocket restaurado — desactivando polling HTTP');
 }
 

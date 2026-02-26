@@ -131,6 +131,14 @@ body::before {
     color: #e67e22;
 }
 
+.status-badge.offline .status-dot {
+    background: #7f8c8d;
+    animation: none;
+}
+.status-badge.offline .status-text {
+    color: #7f8c8d;
+}
+
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
