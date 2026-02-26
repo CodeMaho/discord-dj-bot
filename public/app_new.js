@@ -451,8 +451,25 @@ const StickersSystem = (() => {
         startRenderLoop();  // no-op si ya está corriendo
     }
 
-    function onExternalBeat() {}
-    function setPlaying()     {}
+    // ── Efecto glow en el beat ────────────────────────────────────────────
+    // El beat llega por WebSocket. En vez de mover los stickers (tirones),
+    // se aplica un drop-shadow CSS que se desvanece en ~400ms.
+    function onExternalBeat(intensity = 1.0) {
+        const strength = Math.min(intensity, 3.0);
+        const blurPx   = Math.round(10 + strength * 14);   // 10–52 px
+        const spread   = Math.round(2  + strength * 4);    // 2–14 px
+        Object.entries(stickersData).forEach(([strId, s]) => {
+            const entry = els[strId];
+            if (!entry) return;
+            const hue   = s.hue || 0;
+            const alpha = Math.min(0.65 + strength * 0.15, 1.0);
+            entry.img.style.filter = `drop-shadow(0 0 ${blurPx}px hsla(${hue},100%,70%,${alpha})) drop-shadow(0 0 ${spread}px hsla(${hue},100%,90%,0.9))`;
+            clearTimeout(entry.img._glowTimer);
+            entry.img._glowTimer = setTimeout(() => { entry.img.style.filter = ''; }, 450);
+        });
+    }
+
+    function setPlaying() {}
 
     return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();

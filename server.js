@@ -451,7 +451,6 @@ const StickerServer = (() => {
   const MAX_SPEED    = 1600;
   const IDLE_SPEED   = 40;
   const PLAY_SPEED   = 100;
-  const BEAT_IMPULSE = 55;
   const MAX_LIVES    = 5;
   const INVINCIBLE_MS = 5000;
   const TICK_MS      = 50;   // física a 20 fps
@@ -670,13 +669,8 @@ const StickerServer = (() => {
   }
 
   function onBeat(intensity = 1.0) {
-    stickers.forEach(s => {
-      if (s.grabbedBy !== null) return;
-      s.pulse = Math.min(s.pulse + intensity * 0.8, 1.5);
-      const dir = rnd(0, Math.PI * 2);
-      s.vx += Math.cos(dir) * BEAT_IMPULSE * intensity;
-      s.vy += Math.sin(dir) * BEAT_IMPULSE * intensity;
-    });
+    // El beat solo produce un resplandor visual en el cliente (vía mensaje 'beat' WS).
+    // No se altera la velocidad para evitar tirones en el movimiento.
   }
 
   function setPlaying(isPlaying) {
@@ -1419,6 +1413,9 @@ app.post('/api/pause-resume', async (req, res) => {
         delete currentSong.pausedAt;
       }
     }
+    // Sincronizar stickers con el estado de pausa/reanuda
+    StickerServer.setPlaying(isPaused); // isPaused=true → reanudando, isPaused=false → pausando
+
     broadcastStatus();
     res.json({ success: true, status: currentSong.status });
   } catch (e) {
