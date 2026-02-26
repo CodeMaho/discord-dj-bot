@@ -312,65 +312,93 @@ const StickersSystem = (() => {
         sendToServer({ type: 'release', id, vx, vy });
     });
 
-    // ── Renderizar estado del servidor ────────────────────────────────────
-    function render(stickers) {
-        if (!overlay) return;
+    // ── Loop de interpolación a 60fps ─────────────────────────────────────
+    // El servidor emite estado a ~5fps con posición + velocidad.
+    // El cliente extrapola linealmente a 60fps para movimiento perfectamente suave.
+    let stickersData = {};  // id → { ...campos, vx, vy, serverTime }
+    let renderRafId  = null;
+    const MAX_LIVES  = 5;
+
+    function applyToDOM(s, cx, cy) {
+        const { img, livesEl, wrapper } = getOrCreate(s.id, s.gifUrl);
         const W         = window.innerWidth;
         const H         = window.innerHeight;
         const scaleX    = W / STICKER_VW;
         const scaleY    = H / STICKER_VH;
         const sizeScale = Math.min(scaleX, scaleY);
+        const pxSize    = s.size * sizeScale;
+        const pxCx      = cx * scaleX;
+        const pxCy      = cy * scaleY;
+
+        wrapper.style.transform = `translate(${(pxCx - pxSize / 2).toFixed(1)}px,${(pxCy - pxSize / 2).toFixed(1)}px)`;
+        img.style.width         = pxSize + 'px';
+        img.style.height        = pxSize + 'px';
+        img.style.cursor        = s.grabbed ? 'grabbing' : 'grab';
+        img.style.pointerEvents = 'auto';
+
+        if (s.invincible) img.classList.add('invincible');
+        else              img.classList.remove('invincible');
+
+        const isSurvivor = Object.keys(stickersData).length === 1;
+        const hearts = '❤️'.repeat(Math.max(0, s.lives)) + '🖤'.repeat(Math.max(0, MAX_LIVES - s.lives));
+        livesEl.textContent   = hearts;
+        livesEl.style.display = isSurvivor ? 'none' : '';
+    }
+
+    function startRenderLoop() {
+        if (renderRafId) return;
+        function frame(now) {
+            renderRafId = requestAnimationFrame(frame);
+            if (!overlay) return;
+            const activeIds = new Set();
+            Object.values(stickersData).forEach(s => {
+                activeIds.add(s.id);
+                let cx = s.cx, cy = s.cy;
+                if (!s.grabbed) {
+                    // Extrapolación lineal desde el último update del servidor
+                    const dt = Math.min((now - s.serverTime) / 1000, 0.25);
+                    cx = s.cx + (s.vx || 0) * dt;
+                    cy = s.cy + (s.vy || 0) * dt;
+                    // Clamp para no salirse del espacio virtual
+                    const r = s.size / 2;
+                    cx = Math.max(r, Math.min(STICKER_VW - r, cx));
+                    cy = Math.max(r, Math.min(STICKER_VH - r, cy));
+                }
+                applyToDOM(s, cx, cy);
+            });
+            // Limpiar stickers eliminados
+            Object.keys(els).forEach(strId => {
+                if (!activeIds.has(Number(strId))) { els[strId].wrapper.remove(); delete els[strId]; }
+            });
+        }
+        renderRafId = requestAnimationFrame(frame);
+    }
+
+    function stopRenderLoop() {
+        if (renderRafId) { cancelAnimationFrame(renderRafId); renderRafId = null; }
+    }
+
+    // ── render() para física local (usa posiciones ya calculadas) ─────────
+    function render(stickers) {
+        if (!overlay) return;
         const activeIds = new Set();
-        const MAX_LIVES = 5;
-
-        stickers.forEach(s => {
-            activeIds.add(s.id);
-            const { img, livesEl, wrapper } = getOrCreate(s.id, s.gifUrl);
-            const pxSize = s.size * sizeScale;  // el servidor ya ajusta el size del superviviente
-            const pxCx   = s.cx * scaleX;
-            const pxCy   = s.cy * scaleY;
-
-            wrapper.style.transform = `translate(${(pxCx - pxSize / 2).toFixed(1)}px, ${(pxCy - pxSize / 2).toFixed(1)}px)`;
-            img.style.width         = pxSize + 'px';
-            img.style.height        = pxSize + 'px';
-            img.style.cursor        = s.grabbed ? 'grabbing' : 'grab';
-            img.style.pointerEvents = 'auto';
-
-            if (s.invincible) {
-                img.classList.add('invincible');
-            } else {
-                img.classList.remove('invincible');
-            }
-
-            // Corazones de vidas (ocultar si es el único superviviente)
-            const isSurvivor = stickers.length === 1;
-            const hearts = '❤️'.repeat(Math.max(0, s.lives)) + '🖤'.repeat(Math.max(0, MAX_LIVES - s.lives));
-            livesEl.textContent   = hearts;
-            livesEl.style.display = isSurvivor ? 'none' : '';
-        });
-
-        // Eliminar stickers muertos (convertir clave a número para comparar con Set)
+        stickers.forEach(s => { activeIds.add(s.id); applyToDOM(s, s.cx, s.cy); });
         Object.keys(els).forEach(strId => {
-            if (!activeIds.has(Number(strId))) {
-                els[strId].wrapper.remove();
-                delete els[strId];
-            }
+            if (!activeIds.has(Number(strId))) { els[strId].wrapper.remove(); delete els[strId]; }
         });
     }
 
     // ── Gravedad local (fallback cuando el servidor está desconectado) ────
-    // Cuando WebSocket cae, el cliente simula gravedad localmente con el último
-    // estado conocido. Los stickers caen al suelo sin colisiones entre sí.
     let lastStickersState  = [];
     let localPhysicsActive = false;
     let localRafId         = null;
     let localLastTime      = 0;
-    const LOCAL_GRAVITY    = 1400; // px virtuales/s²
+    const LOCAL_GRAVITY    = 1400;
 
     function startLocalPhysics() {
         if (localPhysicsActive || !lastStickersState.length) return;
+        stopRenderLoop();  // parar interpolación del servidor
         localPhysicsActive = true;
-        // Clonar último estado para no mutar el original
         const local = lastStickersState.map(s => ({ ...s, grabbed: false }));
         localLastTime = performance.now();
 
@@ -378,48 +406,47 @@ const StickersSystem = (() => {
             if (!localPhysicsActive) return;
             const dt = Math.min((now - localLastTime) / 1000, 0.05);
             localLastTime = now;
-
             local.forEach(s => {
                 s.vy = (s.vy || 0) + LOCAL_GRAVITY * dt;
                 s.vx = (s.vx || 0) * 0.97;
                 s.cx += s.vx * dt;
                 s.cy += (s.vy || 0) * dt;
-
                 const r = s.size / 2;
                 if (s.cx - r < 0)          { s.cx = r;              s.vx =  Math.abs(s.vx) * 0.35; }
                 if (s.cx + r > STICKER_VW) { s.cx = STICKER_VW - r; s.vx = -Math.abs(s.vx) * 0.35; }
                 if (s.cy + r > STICKER_VH) { s.cy = STICKER_VH - r; s.vy = -Math.abs(s.vy) * 0.1; s.vx *= 0.8; }
             });
-
             render(local);
             localRafId = requestAnimationFrame(tick);
         }
         localRafId = requestAnimationFrame(tick);
-        console.log('[Stickers] Modo gravedad local activado (servidor desconectado)');
     }
 
     function stopLocalPhysics() {
         if (!localPhysicsActive) return;
         localPhysicsActive = false;
         if (localRafId) { cancelAnimationFrame(localRafId); localRafId = null; }
-        console.log('[Stickers] Modo gravedad local desactivado (servidor conectado)');
+        startRenderLoop();  // retomar interpolación del servidor
     }
 
     // ── API pública ───────────────────────────────────────────────────────
-    function init() {
-        ensureOverlay();
-        console.log('[Stickers] Cliente inicializado, esperando estado del servidor...');
-    }
+    function init() { ensureOverlay(); }
 
     function onServerState(stickers) {
         lastStickersState = stickers;
-        if (localPhysicsActive) return;  // no interferir con física local
+        if (localPhysicsActive) return;
         if (!overlay) ensureOverlay();
-        render(stickers);
+        const now = performance.now();
+        const activeIds = new Set(stickers.map(s => s.id));
+        stickers.forEach(s => { stickersData[s.id] = { ...s, serverTime: now }; });
+        Object.keys(stickersData).forEach(strId => {
+            if (!activeIds.has(Number(strId))) delete stickersData[strId];
+        });
+        startRenderLoop();  // no-op si ya está corriendo
     }
 
-    function onExternalBeat() {}  // no-op: el servidor maneja la física de beats
-    function setPlaying()     {}  // no-op
+    function onExternalBeat() {}
+    function setPlaying()     {}
 
     return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();

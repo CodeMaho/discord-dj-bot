@@ -510,11 +510,12 @@ const StickerServer = (() => {
         gifUrl:     s.gifUrl,
         cx:         s.cx,
         cy:         s.cy,
+        vx:         s.vx,          // velocidad para interpolación en cliente
+        vy:         s.vy,
         size:       s.size,
         hue:        s.hue,
         lives:      s.lives,
         maxLives:   MAX_LIVES,
-        pulse:      s.pulse,
         grabbed:    s.grabbedBy !== null,
         invincible: now < s.invincibleUntil,
       }))
@@ -711,8 +712,8 @@ const StickerServer = (() => {
     ws.send(JSON.stringify({
       type: 'stickers',
       stickers: stickers.map(s => ({
-        id: s.id, gifUrl: s.gifUrl, cx: s.cx, cy: s.cy, size: s.size,
-        hue: s.hue, lives: s.lives, maxLives: MAX_LIVES, pulse: s.pulse,
+        id: s.id, gifUrl: s.gifUrl, cx: s.cx, cy: s.cy, vx: s.vx, vy: s.vy,
+        size: s.size, hue: s.hue, lives: s.lives, maxLives: MAX_LIVES,
         grabbed: s.grabbedBy !== null, invincible: now < s.invincibleUntil,
       }))
     }));
