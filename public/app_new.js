@@ -768,15 +768,43 @@ function updateConnectionStatusOffline() {
     if (statusText) statusText.textContent = 'Servidor offline';
 }
 
-// Intentar obtener URL fresca del backend desde IONOS y, si cambió, reconectar
+// Probar si el servidor corre localmente (mismo equipo que el host del bot)
+// Los Quick Tunnels de Cloudflare a veces no admiten conexiones "hairpin" (loopback)
+// desde la propia máquina que ejecuta cloudflared.
+async function tryLocalhostFallback() {
+    const candidates = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+    for (const url of candidates) {
+        try {
+            const res = await fetch(`${url}/api/status`, { signal: AbortSignal.timeout(1200) });
+            if (res.ok) {
+                console.log(`[Fallback] Servidor encontrado en ${url} — usando localhost directamente`);
+                backendUrl = url;
+                updateBackendUrlDisplay();
+                updateConnectionStatusConnecting();
+                reconnectAttempts = 0;
+                initializeWebSocket();
+                return true;
+            }
+        } catch (_) {}
+    }
+    return false;
+}
+
+// Intentar obtener URL fresca del backend desde IONOS y, si cambió, reconectar.
+// Si IONOS no ayuda, intentar localhost (caso: el cliente ES el servidor).
 async function tryRefreshAndReconnect() {
-    console.log('[Polling] URL posiblemente caducada — buscando URL actualizada en IONOS...');
+    console.log('[Polling] URL posiblemente caducada — buscando URL actualizada...');
+
+    // 1. Intentar primero localhost (detección de "soy el servidor")
+    const isLocal = await tryLocalhostFallback();
+    if (isLocal) return true;
+
+    // 2. Si no somos el servidor, buscar URL actualizada en IONOS
     const freshUrl = await loadBackendUrlFromHosting() || await loadBackendUrlFromJson();
     if (freshUrl && freshUrl !== backendUrl) {
         console.log('[Polling] Nueva URL detectada:', freshUrl);
         backendUrl = freshUrl;
         updateBackendUrlDisplay();
-        // Intentar reconectar WebSocket con la nueva URL
         reconnectAttempts = MAX_RECONNECT_ATTEMPTS - 1;
         initializeWebSocket();
         return true;
