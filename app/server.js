@@ -345,6 +345,7 @@ function loadState() {
 //       ≤ posición actual de MPV, alineando el waveform con el audio real.
 const BeatAnalyzer = (() => {
   let proc           = null;
+  let ytdlpProc      = null;
   let audioBuf       = Buffer.alloc(0);
   let avgEnergy      = 0;
   let lastBeat       = 0;
@@ -423,8 +424,8 @@ const BeatAnalyzer = (() => {
         wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
       }
 
-      // Limitar cola a 60 s para no crecer indefinidamente durante pausas largas
-      const cap = 60 * 10;
+      // Limitar cola a 1 hora para no crecer indefinidamente
+      const cap = 60 * 60 * 10;
       if (waveformQueue.length > cap) waveformQueue.splice(0, waveformQueue.length - cap);
     }, 50);
   }
@@ -489,7 +490,7 @@ const BeatAnalyzer = (() => {
     }
   }
 
-  async function start(url) {
+  function start(url) {
     stop();
     active         = true;
     avgEnergy      = 0;
@@ -503,42 +504,53 @@ const BeatAnalyzer = (() => {
     // Esperar 1 s a que MPV cree el IPC pipe antes de conectar el observador
     setTimeout(startMpvObserver, 1000);
 
-    try {
-      const raw = await ytDlpWrap.execPromise([
-        url,
-        '--get-url',
-        '-f', 'bestaudio[ext=webm]/bestaudio/best',
-        '--no-playlist',
-        '--js-runtimes', 'node'
-      ]);
-      const audioUrl = raw.trim().split('\n')[0];
-      if (!audioUrl || !active) return;
+    // Pipe yt-dlp → ffmpeg: más fiable que obtener la URL CDN por separado.
+    // yt-dlp descarga el audio y ffmpeg lo convierte a PCM en tiempo real.
+    ytdlpProc = spawn('yt-dlp', [
+      url,
+      '-o', '-',
+      '-f', 'bestaudio',
+      '--no-playlist',
+      '-q'
+    ]);
 
-      // -re: lee el stream a velocidad 1x para no adelantarse a MPV
-      proc = spawn('ffmpeg', [
-        '-re',
-        '-reconnect', '1', '-reconnect_streamed', '1',
-        '-i', audioUrl,
-        '-vn',
-        '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1',
-        'pipe:1',
-        '-loglevel', 'quiet'
-      ]);
+    proc = spawn('ffmpeg', [
+      '-i', 'pipe:0',
+      '-vn',
+      '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1',
+      'pipe:1',
+      '-loglevel', 'error'
+    ]);
 
-      proc.stdout.on('data', processPCM);
-      proc.stderr.on('data', () => {});
-      proc.on('error', err => {
-        if (err.code === 'ENOENT') {
-          console.log('[BeatAnalyzer] ffmpeg no encontrado — waveform no disponible');
-        } else {
-          console.error('[BeatAnalyzer]', err.message);
-        }
-      });
-      proc.on('exit', () => { proc = null; });
-      console.log('[BeatAnalyzer] Análisis de audio iniciado (sincronización por IPC)');
-    } catch (e) {
-      console.error('[BeatAnalyzer] Error al iniciar:', e.message);
-    }
+    ytdlpProc.stdout.pipe(proc.stdin);
+
+    ytdlpProc.on('error', err => {
+      if (err.code === 'ENOENT') console.log('[BeatAnalyzer] yt-dlp no encontrado');
+      else console.error('[BeatAnalyzer] yt-dlp error:', err.message);
+    });
+    ytdlpProc.on('exit', (code) => {
+      ytdlpProc = null;
+      if (code !== null && code !== 0) console.log('[BeatAnalyzer] yt-dlp salió con código:', code);
+    });
+
+    proc.stdout.on('data', processPCM);
+    proc.stderr.on('data', d => {
+      const msg = d.toString().trim();
+      if (msg) console.error('[BeatAnalyzer ffmpeg]', msg);
+    });
+    proc.on('error', err => {
+      if (err.code === 'ENOENT') {
+        console.log('[BeatAnalyzer] ffmpeg no encontrado — instala con: winget install Gyan.FFmpeg');
+      } else {
+        console.error('[BeatAnalyzer]', err.message);
+      }
+    });
+    proc.on('exit', (code) => {
+      proc = null;
+      if (code !== null && code !== 0) console.log('[BeatAnalyzer] ffmpeg salió con código:', code);
+    });
+
+    console.log('[BeatAnalyzer] Análisis de audio iniciado (yt-dlp → ffmpeg pipe)');
   }
 
   function stop() {
@@ -548,6 +560,7 @@ const BeatAnalyzer = (() => {
     waveformQueue.length = 0;
     stopDispatcher();
     stopMpvObserver();
+    if (ytdlpProc) { try { ytdlpProc.kill(); } catch (_) {} ytdlpProc = null; }
     if (proc) { try { proc.kill(); } catch (_) {} proc = null; }
     audioBuf = Buffer.alloc(0);
   }
