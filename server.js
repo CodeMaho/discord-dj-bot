@@ -444,7 +444,7 @@ const BeatAnalyzer = (() => {
 const StickerServer = (() => {
   const VIRTUAL_W    = 1920;
   const VIRTUAL_H    = 1080;
-  const COUNT        = 4;
+  const COUNT        = 7;
   const BASE_SIZE    = 90;
   const FRICTION     = 0.985;
   const BOUNCE_DAMP  = 0.78;
@@ -454,8 +454,9 @@ const StickerServer = (() => {
   const BEAT_IMPULSE = 55;
   const MAX_LIVES    = 5;
   const INVINCIBLE_MS = 5000;
-  const TICK_MS      = 50;  // física a 20 fps
-  const BCAST_EVERY  = 4;   // broadcast cada 4 ticks = 200 ms (5 fps) — reduce carga en túnel
+  const TICK_MS      = 50;   // física a 20 fps
+  const BCAST_EVERY  = 4;    // broadcast cada 4 ticks = 200 ms (5 fps)
+  const GRAVITY      = 1400; // px virtuales/s² al caer (sin música)
 
   let stickers    = [];
   let gifUrls     = [];
@@ -561,7 +562,8 @@ const StickerServer = (() => {
     const now = Date.now();
     tickCount++;
 
-    checkCollisions();
+    // Solo hay colisiones (y bajada de vidas) cuando hay música activa
+    if (playing) checkCollisions();
 
     // Eliminar muertos
     const countBefore = stickers.length;
@@ -572,7 +574,7 @@ const StickerServer = (() => {
     if (countAfter === 1 && countBefore > 1) {
       stickers[0].size = BASE_SIZE * 2.8;
       broadcast({ type: 'survivor', id: stickers[0].id });
-      broadcastState();  // broadcast inmediato al detectar superviviente
+      broadcastState();
       return;
     }
 
@@ -582,33 +584,48 @@ const StickerServer = (() => {
         return;
       }
 
-      // Empuje mínimo si está casi parado
-      const spd = Math.hypot(s.vx, s.vy);
-      const tgt = playing ? PLAY_SPEED : IDLE_SPEED;
-      if (spd < tgt * 0.25) {
-        const dir = rnd(0, Math.PI * 2);
-        s.vx += Math.cos(dir) * tgt * 0.35;
-        s.vy += Math.sin(dir) * tgt * 0.35;
+      if (!playing) {
+        // ── Modo gravedad (sin música / servidor desconectado) ───────────
+        // Caen hacia abajo sin empuje lateral ni colisiones
+        s.vy += GRAVITY * dt;
+        s.vx *= 0.96;  // fricción lateral suave
+      } else {
+        // ── Modo normal (con música) ─────────────────────────────────────
+        const spd = Math.hypot(s.vx, s.vy);
+        if (spd < PLAY_SPEED * 0.25) {
+          const dir = rnd(0, Math.PI * 2);
+          s.vx += Math.cos(dir) * PLAY_SPEED * 0.35;
+          s.vy += Math.sin(dir) * PLAY_SPEED * 0.35;
+        }
+        s.vx *= FRICTION;
+        s.vy *= FRICTION;
       }
 
       s.cx += s.vx * dt;
       s.cy += s.vy * dt;
-      s.vx *= FRICTION;
-      s.vy *= FRICTION;
 
-      // Rebote en paredes (usando centro)
       const r = s.size / 2;
       let bounced = false;
       if (s.cx - r < 0)          { s.cx = r;              s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
       if (s.cx + r > VIRTUAL_W)  { s.cx = VIRTUAL_W - r;  s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
       if (s.cy - r < 0)          { s.cy = r;              s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
-      if (s.cy + r > VIRTUAL_H)  { s.cy = VIRTUAL_H - r;  s.vy = -Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
-      if (bounced) { s.hue = (s.hue + Math.floor(rnd(50, 130))) % 360; s.pulse = Math.max(s.pulse, 0.5); }
+      if (s.cy + r > VIRTUAL_H)  {
+        s.cy = VIRTUAL_H - r;
+        if (!playing) {
+          // Suelo amortiguado: los stickers se apilan sin rebotar mucho
+          s.vy = -Math.abs(s.vy) * 0.12;
+          s.vx *= 0.75;
+        } else {
+          s.vy = -Math.abs(s.vy) * BOUNCE_DAMP;
+          bounced = true;
+        }
+      }
 
+      if (playing && bounced) { s.hue = (s.hue + Math.floor(rnd(50, 130))) % 360; s.pulse = Math.max(s.pulse, 0.5); }
       s.pulse *= Math.pow(0.001, dt);
     });
 
-    // Broadcast de posiciones solo cada BCAST_EVERY ticks (5 fps) para no saturar el túnel
+    // Broadcast de posiciones solo cada BCAST_EVERY ticks (5 fps)
     if (tickCount % BCAST_EVERY === 0) broadcastState();
   }
 
@@ -661,7 +678,19 @@ const StickerServer = (() => {
     });
   }
 
-  function setPlaying(isPlaying) { playing = isPlaying; }
+  function setPlaying(isPlaying) {
+    if (isPlaying && !playing) {
+      // La música arranca: lanzar stickers hacia arriba desde el suelo
+      stickers.forEach(s => {
+        if (s.grabbedBy !== null) return;
+        const angle = rnd(-Math.PI * 0.95, -Math.PI * 0.05); // cono hacia arriba
+        const spd   = rnd(400, 900);
+        s.vx = Math.cos(angle) * spd;
+        s.vy = Math.sin(angle) * spd;  // negativo = hacia arriba
+      });
+    }
+    playing = isPlaying;
+  }
 
   function revive() {
     nextId = 0;

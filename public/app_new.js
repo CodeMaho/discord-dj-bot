@@ -358,6 +358,53 @@ const StickersSystem = (() => {
         });
     }
 
+    // ── Gravedad local (fallback cuando el servidor está desconectado) ────
+    // Cuando WebSocket cae, el cliente simula gravedad localmente con el último
+    // estado conocido. Los stickers caen al suelo sin colisiones entre sí.
+    let lastStickersState  = [];
+    let localPhysicsActive = false;
+    let localRafId         = null;
+    let localLastTime      = 0;
+    const LOCAL_GRAVITY    = 1400; // px virtuales/s²
+
+    function startLocalPhysics() {
+        if (localPhysicsActive || !lastStickersState.length) return;
+        localPhysicsActive = true;
+        // Clonar último estado para no mutar el original
+        const local = lastStickersState.map(s => ({ ...s, grabbed: false }));
+        localLastTime = performance.now();
+
+        function tick(now) {
+            if (!localPhysicsActive) return;
+            const dt = Math.min((now - localLastTime) / 1000, 0.05);
+            localLastTime = now;
+
+            local.forEach(s => {
+                s.vy = (s.vy || 0) + LOCAL_GRAVITY * dt;
+                s.vx = (s.vx || 0) * 0.97;
+                s.cx += s.vx * dt;
+                s.cy += (s.vy || 0) * dt;
+
+                const r = s.size / 2;
+                if (s.cx - r < 0)          { s.cx = r;              s.vx =  Math.abs(s.vx) * 0.35; }
+                if (s.cx + r > STICKER_VW) { s.cx = STICKER_VW - r; s.vx = -Math.abs(s.vx) * 0.35; }
+                if (s.cy + r > STICKER_VH) { s.cy = STICKER_VH - r; s.vy = -Math.abs(s.vy) * 0.1; s.vx *= 0.8; }
+            });
+
+            render(local);
+            localRafId = requestAnimationFrame(tick);
+        }
+        localRafId = requestAnimationFrame(tick);
+        console.log('[Stickers] Modo gravedad local activado (servidor desconectado)');
+    }
+
+    function stopLocalPhysics() {
+        if (!localPhysicsActive) return;
+        localPhysicsActive = false;
+        if (localRafId) { cancelAnimationFrame(localRafId); localRafId = null; }
+        console.log('[Stickers] Modo gravedad local desactivado (servidor conectado)');
+    }
+
     // ── API pública ───────────────────────────────────────────────────────
     function init() {
         ensureOverlay();
@@ -365,6 +412,8 @@ const StickersSystem = (() => {
     }
 
     function onServerState(stickers) {
+        lastStickersState = stickers;
+        if (localPhysicsActive) return;  // no interferir con física local
         if (!overlay) ensureOverlay();
         render(stickers);
     }
@@ -372,7 +421,7 @@ const StickersSystem = (() => {
     function onExternalBeat() {}  // no-op: el servidor maneja la física de beats
     function setPlaying()     {}  // no-op
 
-    return { init, onServerState, onExternalBeat, setPlaying, sendToServer };
+    return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -554,10 +603,11 @@ function initializeWebSocket() {
     
     ws.onopen = () => {
         console.log('WebSocket conectado');
-        reconnectAttempts = 0; // Reset intentos al conectar
+        reconnectAttempts = 0;
         updateConnectionStatus(true);
         showNotification('Conectado', 'Conexión establecida con el servidor', 'success');
-        
+        StickersSystem.stopLocalPhysics();  // el servidor vuelve a tomar el control
+
         if (reconnectTimer) {
             clearTimeout(reconnectTimer);
             reconnectTimer = null;
@@ -608,6 +658,7 @@ function initializeWebSocket() {
     ws.onclose = () => {
         console.log('WebSocket desconectado');
         updateConnectionStatus(false);
+        StickersSystem.startLocalPhysics();  // stickers caen al suelo
         
         // Exponential backoff con máximo de intentos
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
@@ -679,8 +730,30 @@ function updateStatus(data) {
     updateQueueDisplay(queue);
 }
 
+// Extraer URL de miniatura de YouTube
+function extractThumbnailUrl(url) {
+    if (!url) return null;
+    const m = url.match(/(?:youtube\.com\/(?:watch\?.*v=|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?.*v=)([a-zA-Z0-9_-]{11})/);
+    if (m) return `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg`;
+    return null;
+}
+
 function updateNowPlaying(song) {
     if (!song) return;
+
+    // Miniatura de la canción como fondo del panel now-playing
+    const nowPlayingEl = document.querySelector('.now-playing');
+    if (nowPlayingEl) {
+        const thumbUrl  = extractThumbnailUrl(song.url);
+        const isActive  = song.status === 'playing' || song.status === 'paused';
+        if (thumbUrl && isActive) {
+            nowPlayingEl.style.setProperty('--thumb-url', `url('${thumbUrl}')`);
+            nowPlayingEl.classList.add('has-thumbnail');
+        } else {
+            nowPlayingEl.style.removeProperty('--thumb-url');
+            nowPlayingEl.classList.remove('has-thumbnail');
+        }
+    }
 
     // Actualizar título
     if (elements.currentSong) {
