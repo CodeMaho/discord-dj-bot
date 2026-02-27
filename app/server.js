@@ -1624,7 +1624,7 @@ app.post('/api/clip', async (req, res) => {
     currentClipLocalPath = isLocal ? playUrl : null;
 
     // Spawn MPV para el clip (máx. 20 segundos, mismo dispositivo de audio)
-    const clipArgs = ['--no-video', `--volume=${Math.round(clipVol)}`, '--end=20'];
+    const clipArgs = ['--no-video', '--volume-max=200', `--volume=${Math.round(clipVol)}`, '--end=20'];
     if (!isLocal) clipArgs.push('--ytdl-format=bestaudio');
     if (savedAudioDevice && savedAudioDevice.trim()) {
       clipArgs.push('--audio-device=' + savedAudioDevice);
