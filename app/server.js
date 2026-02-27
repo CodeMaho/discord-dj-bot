@@ -234,6 +234,9 @@ let activeConnections = 0;
 let manualStop = false; // Flag para diferenciar stop manual vs finalización natural
 let isStartingPlayback = false; // Lock para evitar reproducciones simultáneas
 let cachedAudioDevices = []; // Cache de dispositivos de audio
+let currentClipProcess = null;   // Proceso MPV del clip de radio
+let currentClipDuckVolume = 40; // Volumen de ducking activo (para restaurar correctamente)
+let currentClipLocalPath = null; // Ruta del archivo subido activo (se borra al terminar)
 
 // Función para cargar dispositivos de audio (usado al inicio y para refrescar)
 function loadAudioDevices() {
@@ -515,8 +518,10 @@ const BeatAnalyzer = (() => {
     ]);
 
     proc = spawn('ffmpeg', [
+      '-fflags', '+genpts+discardcorrupt',  // regenerar timestamps y descartar paquetes con DTS desordenado
       '-i', 'pipe:0',
       '-vn',
+      '-af', 'aresample=async=1000',        // compensar huecos de audio causados por paquetes descartados
       '-f', 's16le', '-ar', String(SAMPLE_RATE), '-ac', '1',
       'pipe:1',
       '-loglevel', 'error'
@@ -964,6 +969,42 @@ function stopCurrentPlayback(skipBroadcast = false, isManualStop = true) {
 
   if (!skipBroadcast) {
     broadcastStatus();
+  }
+}
+
+// Enviar comando de volumen al MPV principal vía IPC (falla silenciosamente)
+function setMpvVolume(vol) {
+  const ipcPipe = process.platform === 'win32' ? '\\\\.\\pipe\\mpvdj' : '/tmp/mpvdj.sock';
+  const command = JSON.stringify({ command: ['set_property', 'volume', vol] }) + '\n';
+  return new Promise((resolve) => {
+    try {
+      const client = net.createConnection(ipcPipe);
+      const timer = setTimeout(() => { try { client.destroy(); } catch (_) {} resolve(); }, 1000);
+      client.on('connect', () => { client.write(command); clearTimeout(timer); client.end(); resolve(); });
+      client.on('error', () => { clearTimeout(timer); resolve(); });
+    } catch (_) { resolve(); }
+  });
+}
+
+// Borrar archivo de clip subido (solo si está dentro de data/clips/ por seguridad)
+function deleteClipFile(filePath) {
+  if (!filePath) return;
+  const clipsDir = path.join(__dirname, 'data', 'clips');
+  if (!filePath.startsWith(clipsDir)) return; // seguridad: nunca borrar fuera de esta carpeta
+  fs.unlink(filePath, (err) => {
+    if (err) console.warn(`[Clip] No se pudo borrar archivo temporal: ${err.message}`);
+    else     console.log(`[Clip] Archivo temporal borrado: ${path.basename(filePath)}`);
+  });
+}
+
+// Transición suave de volumen (fromVol → toVol en durationMs ms, 10 pasos)
+async function fadeVolume(fromVol, toVol, durationMs) {
+  const steps = 10;
+  const stepMs = Math.round(durationMs / steps);
+  const stepSize = (toVol - fromVol) / steps;
+  for (let i = 1; i <= steps; i++) {
+    await setMpvVolume(Math.max(0, Math.min(100, Math.round(fromVol + stepSize * i))));
+    if (i < steps) await new Promise(r => setTimeout(r, stepMs));
   }
 }
 
@@ -1506,6 +1547,172 @@ app.post('/api/stop', (req, res) => {
     success: true,
     message: 'Reproducción detenida'
   });
+});
+
+// POST: Poner clip de radio (suena encima de la música con ducking de volumen)
+app.post('/api/clip', async (req, res) => {
+  const { url, musicDuckVolume = 40, clipVolume = 100 } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL requerida' });
+
+  const duckVol = Math.max(0, Math.min(100, Number(musicDuckVolume) || 40));
+  const clipVol = Math.max(0, Math.min(100, Number(clipVolume) || 100));
+  const isLocal = path.isAbsolute(url); // Archivo local subido previamente
+
+  try {
+    let playUrl, clipTitle;
+
+    if (isLocal) {
+      // Archivo local: reproducir directamente sin yt-dlp
+      playUrl   = url;
+      clipTitle = path.basename(url).replace(/^\d+_/, ''); // Quitar prefijo timestamp
+      console.log(`[Clip] Archivo local: "${clipTitle}"`);
+    } else {
+      console.log('[Clip] Resolviendo URL...');
+      const { info, playUrl: resolved } = await Promise.race([
+        resolveTrackInfo(url),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout: 30s')), 30000))
+      ]);
+      playUrl   = resolved;
+      clipTitle = info?.title || 'Clip';
+      console.log(`[Clip] ✅ "${clipTitle}" → ${playUrl}`);
+    }
+
+    // Comprobar si ya había un clip activo antes de matar el proceso
+    const clipWasActive = currentClipProcess !== null;
+
+    // Matar clip previo (anular referencia primero para que su onClose lo ignore)
+    if (currentClipProcess) {
+      const old        = currentClipProcess;
+      const oldPath    = currentClipLocalPath; // guardar antes de sobreescribir
+      currentClipProcess   = null;
+      currentClipLocalPath = null;
+      try {
+        if (process.platform === 'win32' && old.pid) {
+          exec(`taskkill /F /T /PID ${old.pid}`, () => {});
+        } else {
+          old.kill('SIGKILL');
+        }
+      } catch (_) {}
+      deleteClipFile(oldPath); // borrar archivo del clip que fue interrumpido
+    }
+
+    // Responder al cliente inmediatamente
+    res.json({ success: true, message: `Clip: "${clipTitle}"` });
+
+    // Helper broadcast
+    const broadcastClip = (status, title) => {
+      const msg = JSON.stringify({ type: 'clip', status, title: title || null });
+      wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
+    };
+
+    const wasPlaying = currentSong.status === 'playing' || currentSong.status === 'paused';
+
+    // Ducking: bajar volumen si hay música; si ya había clip activo, solo actualizar nivel
+    if (wasPlaying && !clipWasActive) {
+      console.log(`[Clip] Ducking: bajando volumen a ${duckVol}...`);
+      currentClipDuckVolume = duckVol;
+      await fadeVolume(100, duckVol, 500);
+    } else if (wasPlaying && clipWasActive && duckVol !== currentClipDuckVolume) {
+      // Nuevo clip con distinto nivel: ajustar sin fade visible
+      await setMpvVolume(duckVol);
+      currentClipDuckVolume = duckVol;
+    }
+
+    broadcastClip('playing', clipTitle);
+
+    // Registrar ruta para borrarla cuando termine (solo archivos subidos)
+    currentClipLocalPath = isLocal ? playUrl : null;
+
+    // Spawn MPV para el clip (máx. 20 segundos, mismo dispositivo de audio)
+    const clipArgs = ['--no-video', `--volume=${Math.round(clipVol)}`, '--end=20'];
+    if (!isLocal) clipArgs.push('--ytdl-format=bestaudio');
+    if (savedAudioDevice && savedAudioDevice.trim()) {
+      clipArgs.push('--audio-device=' + savedAudioDevice);
+    }
+    clipArgs.push(playUrl);
+
+    console.log('[Clip] Iniciando MPV:', clipArgs);
+    const clipProc = spawn('mpv', clipArgs);
+    currentClipProcess = clipProc;
+
+    const onClipEnd = async () => {
+      if (currentClipProcess !== clipProc) return; // Fue reemplazado por otro clip
+      currentClipProcess = null;
+      console.log('[Clip] Terminado. Restaurando volumen...');
+      if (wasPlaying) {
+        try { await fadeVolume(currentClipDuckVolume, 100, 1000); } catch (_) {}
+      }
+      broadcastClip('stopped', null);
+      // Borrar el archivo subido una vez terminada la reproducción
+      deleteClipFile(currentClipLocalPath);
+      currentClipLocalPath = null;
+    };
+
+    clipProc.on('close', onClipEnd);
+    clipProc.on('error', (err) => {
+      console.error('[Clip] Error MPV:', err.message);
+      onClipEnd().catch(() => {});
+    });
+
+  } catch (error) {
+    console.error('[Clip] Error:', error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Error al reproducir clip', details: error.message });
+    } else {
+      setMpvVolume(100).catch(() => {});
+    }
+  }
+});
+
+// POST: Detener clip de radio
+app.post('/api/clip/stop', async (req, res) => {
+  if (!currentClipProcess) {
+    return res.json({ success: true, message: 'No hay clip activo' });
+  }
+
+  const proc = currentClipProcess;
+  currentClipProcess = null;
+
+  try {
+    if (process.platform === 'win32' && proc.pid) {
+      exec(`taskkill /F /T /PID ${proc.pid}`, () => {});
+    } else {
+      proc.kill('SIGKILL');
+    }
+  } catch (_) {}
+
+  // Restaurar al volumen normal usando el nivel de duck guardado
+  if (currentSong.status === 'playing' || currentSong.status === 'paused') {
+    await fadeVolume(currentClipDuckVolume, 100, 600);
+  }
+
+  // Borrar el archivo subido si era un clip local
+  deleteClipFile(currentClipLocalPath);
+  currentClipLocalPath = null;
+
+  const msg = JSON.stringify({ type: 'clip', status: 'stopped', title: null });
+  wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(msg); });
+
+  res.json({ success: true, message: 'Clip detenido' });
+});
+
+// POST: Subir archivo de audio local para usar como clip
+app.post('/api/clip/upload', express.raw({ type: '*/*', limit: '100mb' }), (req, res) => {
+  try {
+    const rawName  = req.headers['x-filename']
+      ? decodeURIComponent(req.headers['x-filename'])
+      : `clip_${Date.now()}.mp3`;
+    const safeName = `${Date.now()}_${path.basename(rawName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const uploadDir = path.join(__dirname, 'data', 'clips');
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const filePath = path.join(uploadDir, safeName);
+    fs.writeFileSync(filePath, req.body);
+    console.log(`[Clip Upload] ✅ ${filePath} (${req.body.length} bytes)`);
+    res.json({ success: true, path: filePath, name: rawName });
+  } catch (err) {
+    console.error('[Clip Upload] Error:', err.message);
+    res.status(500).json({ error: 'Error al guardar archivo', details: err.message });
+  }
 });
 
 // POST: Pausar / reanudar la canción actual en el mismo minuto

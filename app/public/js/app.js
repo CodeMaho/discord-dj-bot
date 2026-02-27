@@ -188,6 +188,7 @@ let currentStatus = {
     duration: 0,
     elapsed: 0
 };
+let pendingClipFile = null; // Archivo local seleccionado para el clip
 
 // Elementos del DOM
 const elements = {
@@ -215,7 +216,20 @@ const elements = {
     settingsToggle: document.getElementById('settingsToggle'),
     settingsPanel: document.getElementById('settingsPanel'),
     pauseResumeBtn: document.getElementById('pauseResumeBtn'),
-    reviveBtn: document.getElementById('reviveBtn')
+    reviveBtn: document.getElementById('reviveBtn'),
+    // Clip de Radio
+    clipInput: document.getElementById('clipInput'),
+    clipBtn: document.getElementById('clipBtn'),
+    clipStopBtn: document.getElementById('clipStopBtn'),
+    clipStatus: document.getElementById('clipStatus'),
+    clipStatusText: document.getElementById('clipStatusText'),
+    clipFileInput: document.getElementById('clipFileInput'),
+    clipFileLabel: document.getElementById('clipFileLabel'),
+    clipFileClearBtn: document.getElementById('clipFileClearBtn'),
+    clipMusicVolumeSlider: document.getElementById('clipMusicVolumeSlider'),
+    clipMusicVolumeValue: document.getElementById('clipMusicVolumeValue'),
+    clipVolumeSlider: document.getElementById('clipVolumeSlider'),
+    clipVolumeValue: document.getElementById('clipVolumeValue')
 };
 
 // ============================================
@@ -792,6 +806,10 @@ function initializeWebSocket() {
             if (data.type === 'survivor') {
                 // El render ya maneja el flag survivor en onServerState
                 console.log('[Stickers] ¡Último superviviente!', data.id);
+            }
+
+            if (data.type === 'clip') {
+                updateClipStatus(data.status, data.title);
             }
         } catch (error) {
             console.error('Error procesando mensaje WebSocket:', error);
@@ -1383,6 +1401,50 @@ function attachEventListeners() {
             StickersSystem.sendToServer({ type: 'revive' });
         });
     }
+
+    // Clip de Radio — botones y teclado
+    if (elements.clipBtn) {
+        elements.clipBtn.addEventListener('click', playClip);
+    }
+    if (elements.clipStopBtn) {
+        elements.clipStopBtn.addEventListener('click', stopClip);
+    }
+    if (elements.clipInput) {
+        elements.clipInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); playClip(); }
+        });
+    }
+
+    // Clip de Radio — archivo local
+    if (elements.clipFileInput) {
+        elements.clipFileInput.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+                pendingClipFile = file;
+                const displayName = file.name.length > 28 ? file.name.slice(0, 25) + '...' : file.name;
+                if (elements.clipFileLabel) elements.clipFileLabel.textContent = displayName;
+                if (elements.clipFileClearBtn) elements.clipFileClearBtn.style.display = '';
+                if (elements.clipInput) elements.clipInput.value = ''; // limpiar URL si hay archivo
+            }
+        });
+    }
+    if (elements.clipFileClearBtn) {
+        elements.clipFileClearBtn.addEventListener('click', clearClipFile);
+    }
+
+    // Clip de Radio — sliders de volumen
+    if (elements.clipMusicVolumeSlider) {
+        elements.clipMusicVolumeSlider.addEventListener('input', () => {
+            if (elements.clipMusicVolumeValue)
+                elements.clipMusicVolumeValue.textContent = elements.clipMusicVolumeSlider.value + '%';
+        });
+    }
+    if (elements.clipVolumeSlider) {
+        elements.clipVolumeSlider.addEventListener('input', () => {
+            if (elements.clipVolumeValue)
+                elements.clipVolumeValue.textContent = elements.clipVolumeSlider.value + '%';
+        });
+    }
 }
 
 // ============================================
@@ -1667,6 +1729,99 @@ async function clearQueue() {
         showNotification('Error', error.message || 'No se pudo limpiar la cola', 'error');
     } finally {
         if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = false;
+    }
+}
+
+// ============================================
+// CLIP DE RADIO
+// ============================================
+
+async function playClip() {
+    const url       = elements.clipInput ? elements.clipInput.value.trim() : '';
+    const duckVol   = elements.clipMusicVolumeSlider ? parseInt(elements.clipMusicVolumeSlider.value) : 40;
+    const clipVol   = elements.clipVolumeSlider       ? parseInt(elements.clipVolumeSlider.value)       : 100;
+
+    if (!url && !pendingClipFile) {
+        showNotification('Error', 'Escribe una URL, el nombre de una canción o adjunta un archivo', 'error');
+        return;
+    }
+
+    if (elements.clipBtn) elements.clipBtn.disabled = true;
+
+    try {
+        let playUrl = url;
+
+        // Si hay un archivo local pendiente, subirlo primero
+        if (pendingClipFile) {
+            showNotification('⏳ Subiendo', `"${pendingClipFile.name}"...`, 'info');
+            const uploadResult = await uploadClipFile(pendingClipFile);
+            playUrl = uploadResult.path;
+        }
+
+        const response = await fetch(`${getBackendUrl()}/api/clip`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: playUrl, musicDuckVolume: duckVol, clipVolume: clipVol })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || data.details || 'Error desconocido');
+
+        showNotification('📻 Clip', data.message || 'Clip iniciado', 'success');
+        if (elements.clipInput) elements.clipInput.value = '';
+        clearClipFile(); // Limpiar archivo seleccionado tras lanzar el clip
+
+    } catch (error) {
+        console.error('[Clip] Error:', error);
+        showNotification('❌ Error', error.message || 'No se pudo iniciar el clip', 'error');
+    } finally {
+        if (elements.clipBtn) elements.clipBtn.disabled = false;
+    }
+}
+
+async function uploadClipFile(file) {
+    const response = await fetch(`${getBackendUrl()}/api/clip/upload`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': file.type || 'application/octet-stream',
+            'X-Filename': encodeURIComponent(file.name)
+        },
+        body: file
+    });
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Error al subir archivo: ${response.status}`);
+    }
+    return await response.json(); // { success, path, name }
+}
+
+function clearClipFile() {
+    pendingClipFile = null;
+    if (elements.clipFileInput) elements.clipFileInput.value = '';
+    if (elements.clipFileLabel) elements.clipFileLabel.textContent = 'Adjuntar archivo';
+    if (elements.clipFileClearBtn) elements.clipFileClearBtn.style.display = 'none';
+}
+
+async function stopClip() {
+    try {
+        const response = await fetch(`${getBackendUrl()}/api/clip/stop`, { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error desconocido');
+        showNotification('Éxito', 'Clip detenido', 'success');
+    } catch (error) {
+        showNotification('Error', error.message || 'No se pudo detener el clip', 'error');
+    }
+}
+
+function updateClipStatus(status, title) {
+    const isPlaying = status === 'playing';
+    if (elements.clipStatus) {
+        elements.clipStatus.style.display = isPlaying ? 'block' : 'none';
+    }
+    if (elements.clipStatusText && isPlaying) {
+        elements.clipStatusText.textContent = title ? `Clip sonando: ${title}` : 'Clip sonando...';
+    }
+    if (elements.clipStopBtn) {
+        elements.clipStopBtn.style.display = isPlaying ? '' : 'none';
     }
 }
 

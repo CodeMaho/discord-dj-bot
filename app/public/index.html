@@ -129,6 +129,69 @@
                 </div>
             </div>
 
+            <!-- Radio Clip Card -->
+            <div class="card">
+                <h2>🎙️ Clip de Radio</h2>
+
+                <!-- URL input -->
+                <div class="input-group">
+                    <label for="clipInput">URL o canción para el clip</label>
+                    <div class="input-with-button">
+                        <input
+                            type="text"
+                            id="clipInput"
+                            placeholder="URL o nombre del clip (máx. 20 seg)"
+                            autocomplete="off"
+                        >
+                    </div>
+                </div>
+
+                <!-- Local file input -->
+                <div class="input-group" style="margin-top:6px;">
+                    <label>O adjunta un archivo de audio local</label>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
+                        <label class="btn btn-secondary" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin:0; padding:8px 14px;">
+                            <span>📎</span>
+                            <span id="clipFileLabel">Adjuntar archivo</span>
+                            <input type="file" id="clipFileInput" accept="audio/*,video/*" style="display:none">
+                        </label>
+                        <button class="btn btn-secondary" id="clipFileClearBtn" title="Quitar archivo" style="display:none; padding:6px 10px;">✕</button>
+                    </div>
+                    <div class="input-hint">MP3, WAV, OGG, FLAC y otros formatos soportados</div>
+                </div>
+
+                <!-- Volume controls -->
+                <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="min-width:155px; font-size:0.84em; color:var(--text-muted,#999);">🎵 Música durante clip</span>
+                        <input type="range" id="clipMusicVolumeSlider" min="0" max="100" value="40" style="flex:1; cursor:pointer; accent-color:#ffa500;">
+                        <span id="clipMusicVolumeValue" style="min-width:38px; text-align:right; font-size:0.84em; font-weight:600;">40%</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="min-width:155px; font-size:0.84em; color:var(--text-muted,#999);">🎙️ Volumen del clip</span>
+                        <input type="range" id="clipVolumeSlider" min="0" max="100" value="100" style="flex:1; cursor:pointer; accent-color:#a855f7;">
+                        <span id="clipVolumeValue" style="min-width:38px; text-align:right; font-size:0.84em; font-weight:600;">100%</span>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="button-group" style="margin-top:14px;">
+                    <button class="btn btn-accent" id="clipBtn">
+                        <span class="btn-icon">🎙️</span>
+                        Poner Clip
+                    </button>
+                    <button class="btn btn-secondary" id="clipStopBtn" style="display:none">
+                        <span class="btn-icon">⏹️</span>
+                        Parar Clip
+                    </button>
+                </div>
+
+                <!-- Active clip status -->
+                <div id="clipStatus" style="display:none; margin-top:12px; padding:8px 12px; background:rgba(255,165,0,0.12); border-left:3px solid #ffa500; border-radius:4px; font-size:0.9em; color:#ffa500;">
+                    📻 <span id="clipStatusText">Clip sonando...</span>
+                </div>
+            </div>
+
             <!-- Queue Card -->
             <div class="card">
                 <div class="queue-header">
