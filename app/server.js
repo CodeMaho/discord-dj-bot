@@ -1555,7 +1555,7 @@ app.post('/api/clip', async (req, res) => {
   if (!url) return res.status(400).json({ error: 'URL requerida' });
 
   const duckVol = Math.max(0, Math.min(100, Number(musicDuckVolume) || 40));
-  const clipVol = Math.max(0, Math.min(100, Number(clipVolume) || 100));
+  const clipVol = Math.max(0, Math.min(200, Number(clipVolume) || 100));
   const isLocal = path.isAbsolute(url); // Archivo local subido previamente
 
   try {
