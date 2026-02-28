@@ -1080,7 +1080,9 @@ async function playWithMPV(url, audioDevice, title = null) {
       const mpvArgs = [
         '--no-video',
         '--volume=100',
-        '--ytdl-format=bestaudio',
+        '--ytdl-format=bestaudio[acodec=opus]/bestaudio[acodec=mp4a.40.2]/bestaudio',
+        '--audio-samplerate=48000',   // Discord usa 48 kHz; evita resampleo de Windows
+        '--audio-channels=stereo',    // forzar estéreo
         `--input-ipc-server=${ipcPath}`
       ];
 
