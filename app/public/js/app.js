@@ -97,7 +97,16 @@ function getInitialBackendUrl() {
     return '';
 }
 
+// Devuelve true si el cliente está accediendo desde la misma máquina que el servidor
+function isLocalAccess() {
+    const h = window.location.hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '::1';
+}
+
 function getBackendUrl() {
+    // En acceso local siempre usar el origen de la página (evita intentar resolver el túnel)
+    if (isLocalAccess()) return window.location.origin;
+
     if (backendUrl) {
         let url = backendUrl.replace(/\/$/, ''); // Quitar trailing slash
         // Asegurar que tenga protocolo
@@ -605,22 +614,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function tryConnect() {
-    // 1. Intentar cargar URL del backend desde IONOS
-    let hostedUrl = await loadBackendUrlFromHosting();
-
-    if (!hostedUrl) {
-        console.log('[Init] PHP no disponible, intentando JSON estático...');
-        hostedUrl = await loadBackendUrlFromJson();
-    }
-
-    if (hostedUrl) {
-        backendUrl = hostedUrl;
-        console.log('[Init] URL del backend:', backendUrl);
+    // Si se accede desde localhost, no intentar cargar el túnel remoto: siempre usar origen local
+    if (isLocalAccess()) {
+        backendUrl = '';
+        configLoaded = true;
+        console.log('[Init] Acceso local detectado — usando origen local');
     } else {
-        backendUrl = getInitialBackendUrl();
-        console.log('[Init] Usando fallback:', backendUrl || '(origen local)');
+        // 1. Intentar cargar URL del backend desde IONOS
+        let hostedUrl = await loadBackendUrlFromHosting();
+
+        if (!hostedUrl) {
+            console.log('[Init] PHP no disponible, intentando JSON estático...');
+            hostedUrl = await loadBackendUrlFromJson();
+        }
+
+        if (hostedUrl) {
+            backendUrl = hostedUrl;
+            console.log('[Init] URL del backend:', backendUrl);
+        } else {
+            backendUrl = getInitialBackendUrl();
+            console.log('[Init] Usando fallback:', backendUrl || '(origen local)');
+        }
+        configLoaded = true;
     }
-    configLoaded = true;
 
     updateBackendUrlDisplay();
 
@@ -727,6 +743,9 @@ function updateBackendUrlDisplay() {
 // Manejar actualización de configuración desde el servidor
 function handleConfigUpdate(config) {
     if (!config) return;
+
+    // En acceso local ignorar el tunnel URL que manda el servidor
+    if (isLocalAccess()) return;
 
     // Actualizar URL del backend si viene del servidor
     if (config.backendUrl && config.backendUrl !== backendUrl) {
