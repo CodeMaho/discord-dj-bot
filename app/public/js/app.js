@@ -1340,20 +1340,27 @@ async function reorderQueue(from, to) {
 }
 
 function updateButtonStates() {
-    const isPlaying = currentStatus?.status === 'playing';
+    const status   = currentStatus?.status;
+    const isPlaying = status === 'playing';
+    const isPaused  = status === 'paused';
     const hasQueue = (currentStatus?.queue?.length || 0) > 0;
 
     if (elements.urlInput) elements.urlInput.disabled = false;
     if (elements.playBtn) elements.playBtn.disabled = false;
     if (elements.addQueueBtn) elements.addQueueBtn.disabled = false;
 
-    if (isPlaying) {
+    // STOP ahora pausa: habilitado solo cuando está reproduciendo
+    if (elements.stopBtn) {
+        elements.stopBtn.disabled = !isPlaying;
+        const icon = elements.stopBtn.querySelector('.btn-icon');
+        if (icon) icon.textContent = '⏸';
+    }
+
+    if (isPlaying || isPaused) {
         if (elements.skipBtn) elements.skipBtn.disabled = !hasQueue;
-        if (elements.stopBtn) elements.stopBtn.disabled = false;
         if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = !hasQueue;
     } else {
         if (elements.skipBtn) elements.skipBtn.disabled = true;
-        if (elements.stopBtn) elements.stopBtn.disabled = true;
         if (elements.clearQueueBtn) elements.clearQueueBtn.disabled = !hasQueue;
     }
 }
@@ -1497,6 +1504,10 @@ async function playMedia() {
     const url = elements.urlInput.value.trim();
 
     if (!url) {
+        // Sin URL: reanudar si hay una canción pausada
+        if (currentStatus?.status === 'paused') {
+            return pauseResumeMedia();
+        }
         showNotification('Error', 'Escribe una URL o el nombre de una canción', 'error');
         return;
     }
@@ -1624,46 +1635,8 @@ async function createPlaylist() {
 }
 
 async function stopMedia() {
-    if (!elements.stopBtn) return;
-    elements.stopBtn.disabled = true;
-    
-    try {
-        console.log('[Stop] Enviando petición al servidor...');
-        const response = await fetch(`${getBackendUrl()}/api/stop`, { method: 'POST' });
-        
-        if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Error desconocido');
-        }
-        
-        console.log('[Stop] Servidor respondió, esperando confirmación...');
-        
-        // Esperar a que WebSocket confirme el cambio de estado (máximo 2 segundos)
-        let confirmed = false;
-        const startTime = Date.now();
-        
-        while (!confirmed && (Date.now() - startTime < 2000)) {
-            if (currentStatus?.status === 'stopped') {
-                confirmed = true;
-                console.log('[Stop] ✅ Estado confirmado como stopped');
-            } else {
-                // Esperar 100ms antes de revisar de nuevo
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-        }
-        
-        if (confirmed) {
-            showNotification('✅ Detenido', 'Reproducción pausada', 'success');
-        } else {
-            console.warn('[Stop] Timeout esperando confirmación, pero petición se envió');
-            showNotification('⏹️ Detenido', 'Petición enviada al servidor', 'info');
-        }
-        
-    } catch (error) {
-        console.error('[Stop Error]', error);
-        showNotification('❌ Error', error.message || 'No se pudo detener la reproducción', 'error');
-    } finally {
-        if (elements.stopBtn) elements.stopBtn.disabled = false;
+    if (currentStatus?.status === 'playing') {
+        return pauseResumeMedia();
     }
 }
 
