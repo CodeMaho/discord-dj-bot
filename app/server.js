@@ -186,9 +186,13 @@ function fetchPageHtml(pageUrl) {
     const req = https.get(pageUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     }, (res) => {
-      // Seguir redirecciones
+      // Seguir redirecciones (resolviendo URLs relativas)
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchPageHtml(res.headers.location).then(resolve).catch(reject);
+        let location = res.headers.location;
+        if (location.startsWith('/')) {
+          try { const b = new URL(pageUrl); location = `${b.protocol}//${b.host}${location}`; } catch {}
+        }
+        return fetchPageHtml(location).then(resolve).catch(reject);
       }
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -197,7 +201,7 @@ function fetchPageHtml(pageUrl) {
     req.on('error', reject);
     req.setTimeout(10000, () => {
       req.destroy();
-      reject(new Error('Timeout al cargar página de Suno'));
+      reject(new Error('Timeout al cargar página'));
     });
   });
 }
@@ -256,6 +260,55 @@ async function getYouTubeMix(videoId) {
 
 // ===== SOPORTE SPOTIFY =====
 
+// Token anónimo de Spotify (válido para contenido público sin credenciales)
+function getSpotifyAnonToken() {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      'https://open.spotify.com/get_access_token?reason=transport&productType=web_player',
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'application/json' } },
+      (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (json.accessToken) resolve(json.accessToken);
+            else reject(new Error('Token Spotify no disponible'));
+          } catch { reject(new Error('Error parseando token Spotify')); }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(8000, () => { req.destroy(); reject(new Error('Timeout token Spotify')); });
+  });
+}
+
+// Llama a la Spotify Web API con un token Bearer
+function fetchSpotifyApi(endpoint, token) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      `https://api.spotify.com/v1${endpoint}`,
+      { headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Mozilla/5.0' } },
+      (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); }
+          catch { reject(new Error('Error parseando respuesta Spotify API')); }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout Spotify API')); });
+  });
+}
+
+// Extrae tipo e ID de una URL de Spotify (soporta /intl-XX/ y ?si=)
+function extractSpotifyId(url) {
+  const m = url.match(/\/(track|album|playlist)\/([A-Za-z0-9]+)/i);
+  return m ? { type: m[1].toLowerCase(), id: m[2] } : null;
+}
+
 function isSpotifyUrl(url) {
   return /open\.spotify\.com\/(?:intl-[a-z-]+\/)?(track|album|playlist)\/[A-Za-z0-9]+/i.test(url);
 }
@@ -266,47 +319,55 @@ function getSpotifyType(url) {
 }
 
 // Devuelve una query de búsqueda "Título Artista" para un track de Spotify.
-// Intenta yt-dlp primero, luego scraping HTML.
 async function resolveSpotifyTrack(url) {
-  // 1. yt-dlp (funciona en algunas instalaciones)
+  // 1. Spotify anonymous API (más fiable, sin DRM)
+  try {
+    const extracted = extractSpotifyId(url);
+    if (extracted?.id) {
+      const token = await getSpotifyAnonToken();
+      const data = await fetchSpotifyApi(`/tracks/${extracted.id}`, token);
+      if (data?.name) {
+        const artist = data.artists?.map(a => a.name).join(', ') || '';
+        const q = artist ? `${data.name} ${artist}` : data.name;
+        console.log(`[Spotify] API → "${q}"`);
+        return q;
+      }
+    }
+  } catch (e) {
+    console.log('[Spotify] API anónima track falló:', e.message);
+  }
+
+  // 2. yt-dlp
   try {
     const args = ['--dump-json', '--no-download', url];
     const output = await ytDlpWrap.execPromise(args);
     const info = JSON.parse(output.trim().split('\n')[0]);
     if (info?.title) {
-      const artist = Array.isArray(info.artists)
-        ? info.artists.join(', ')
-        : (info.artist || info.creator || '');
+      const artist = Array.isArray(info.artists) ? info.artists.join(', ') : (info.artist || '');
       const q = artist ? `${info.title} ${artist}` : info.title;
       console.log(`[Spotify] yt-dlp → "${q}"`);
       return q;
     }
   } catch {}
 
-  // 2. Scraping HTML (JSON-LD → og:title)
-  const html = await fetchPageHtml(url);
-
-  const ldMatch = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
-  if (ldMatch) {
-    try {
-      const ld = JSON.parse(ldMatch[1]);
-      const name = ld.name;
-      const byArtist = Array.isArray(ld.byArtist)
-        ? ld.byArtist.map(a => a.name).join(', ')
-        : (ld.byArtist?.name || '');
-      if (name) {
-        const q = byArtist ? `${name} ${byArtist}` : name;
-        console.log(`[Spotify] JSON-LD → "${q}"`);
-        return q;
-      }
-    } catch {}
-  }
-
-  const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/i)?.[1]
-               || html.match(/content="([^"]+)"\s+property="og:title"/i)?.[1];
-  if (ogTitle) {
-    console.log(`[Spotify] og:title → "${ogTitle}"`);
-    return ogTitle;
+  // 3. Scraping HTML (og:title como último recurso)
+  try {
+    const html = await fetchPageHtml(url);
+    const ldMatch = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
+    if (ldMatch) {
+      try {
+        const ld = JSON.parse(ldMatch[1]);
+        if (ld.name) {
+          const byArtist = Array.isArray(ld.byArtist) ? ld.byArtist.map(a => a.name).join(', ') : (ld.byArtist?.name || '');
+          return byArtist ? `${ld.name} ${byArtist}` : ld.name;
+        }
+      } catch {}
+    }
+    const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/i)?.[1]
+                 || html.match(/content="([^"]+)"\s+property="og:title"/i)?.[1];
+    if (ogTitle) { console.log(`[Spotify] og:title → "${ogTitle}"`); return ogTitle; }
+  } catch (e) {
+    console.log('[Spotify] Scraping HTML falló:', e.message);
   }
 
   throw new Error('No se pudo obtener información de la pista de Spotify');
@@ -315,8 +376,56 @@ async function resolveSpotifyTrack(url) {
 // Devuelve array de queries "Título Artista" para un álbum/playlist de Spotify.
 async function resolveSpotifyCollection(url) {
   console.log('[Spotify] Obteniendo colección:', url);
+  const extracted = extractSpotifyId(url);
 
-  // 1. yt-dlp flat-playlist
+  // 1. Spotify anonymous API (método principal)
+  if (extracted) {
+    try {
+      const token = await getSpotifyAnonToken();
+      const { type, id } = extracted;
+      const queries = [];
+
+      if (type === 'playlist') {
+        let offset = 0;
+        while (queries.length < MAX_QUEUE) {
+          const data = await fetchSpotifyApi(
+            `/playlists/${id}/tracks?fields=items(track(name,artists(name))),next&limit=50&offset=${offset}`,
+            token
+          );
+          for (const item of (data.items || [])) {
+            const track = item?.track;
+            if (!track?.name) continue;
+            const artist = track.artists?.map(a => a.name).join(', ') || '';
+            queries.push(artist ? `${track.name} ${artist}` : track.name);
+            if (queries.length >= MAX_QUEUE) break;
+          }
+          if (!data.next || queries.length >= MAX_QUEUE) break;
+          offset += 50;
+        }
+      } else if (type === 'album') {
+        const [tracksData, albumData] = await Promise.all([
+          fetchSpotifyApi(`/albums/${id}/tracks?limit=50`, token),
+          fetchSpotifyApi(`/albums/${id}`, token)
+        ]);
+        const albumArtist = albumData.artists?.map(a => a.name).join(', ') || '';
+        for (const item of (tracksData.items || [])) {
+          if (!item?.name) continue;
+          const artist = item.artists?.map(a => a.name).join(', ') || albumArtist;
+          queries.push(artist ? `${item.name} ${artist}` : item.name);
+          if (queries.length >= MAX_QUEUE) break;
+        }
+      }
+
+      if (queries.length > 0) {
+        console.log(`[Spotify] API extrajo ${queries.length} pistas`);
+        return queries;
+      }
+    } catch (e) {
+      console.log('[Spotify] API anónima colección falló:', e.message);
+    }
+  }
+
+  // 2. yt-dlp flat-playlist (fallback)
   try {
     const args = ['--dump-json', '--no-download', '--flat-playlist', url];
     const output = await ytDlpWrap.execPromise(args);
@@ -326,9 +435,7 @@ async function resolveSpotifyCollection(url) {
         try {
           const e = JSON.parse(l);
           if (!e.title) return null;
-          const artist = Array.isArray(e.artists)
-            ? e.artists.join(', ')
-            : (e.artist || e.creator || '');
+          const artist = Array.isArray(e.artists) ? e.artists.join(', ') : (e.artist || e.creator || '');
           return artist ? `${e.title} ${artist}` : e.title;
         } catch { return null; }
       }).filter(Boolean);
@@ -341,7 +448,7 @@ async function resolveSpotifyCollection(url) {
     console.log('[Spotify] yt-dlp colección falló:', e.message);
   }
 
-  // 2. JSON-LD scraping
+  // 3. JSON-LD scraping (último recurso)
   try {
     const html = await fetchPageHtml(url);
     const ldMatch = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
@@ -349,14 +456,10 @@ async function resolveSpotifyCollection(url) {
       const ld = JSON.parse(ldMatch[1]);
       const tracks = ld.track || ld.tracks || [];
       if (Array.isArray(tracks) && tracks.length > 0) {
-        const albumArtist = Array.isArray(ld.byArtist)
-          ? ld.byArtist.map(a => a.name).join(', ')
-          : (ld.byArtist?.name || '');
+        const albumArtist = Array.isArray(ld.byArtist) ? ld.byArtist.map(a => a.name).join(', ') : (ld.byArtist?.name || '');
         const queries = tracks.map(t => {
           if (!t.name) return null;
-          const artist = Array.isArray(t.byArtist)
-            ? t.byArtist.map(a => a.name).join(', ')
-            : (t.byArtist?.name || albumArtist);
+          const artist = Array.isArray(t.byArtist) ? t.byArtist.map(a => a.name).join(', ') : (t.byArtist?.name || albumArtist);
           return artist ? `${t.name} ${artist}` : t.name;
         }).filter(Boolean);
         if (queries.length > 0) {
