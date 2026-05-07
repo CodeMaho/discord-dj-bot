@@ -1460,8 +1460,8 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       BeatAnalyzer.start(url);
       StickerServer.setPlaying(true);
       
-      // Ruta del IPC: named pipe en Windows, socket Unix en Linux/Mac
-      const ipcPath = process.platform === 'win32' ? 'mpvdj' : '/tmp/mpvdj.sock';
+      // Ruta del IPC: en Windows se requiere el path completo \\.\pipe\<name>
+      const ipcPath = process.platform === 'win32' ? '\\\\.\\pipe\\mpvdj' : '/tmp/mpvdj.sock';
 
       const mpvArgs = [
         '--no-video',
