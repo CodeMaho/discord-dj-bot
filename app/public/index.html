@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎵 Discord DJ Brook</title>
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,13 +15,17 @@
         <!-- Header -->
         <header class="header">
             <div class="logo">
-                <span class="icon">🎵</span>
-                <h1>Discord DJ Brook</h1>
+                <img src="assets/brokIcon.jpg" alt="Brook" class="logo-img">
+                <h1>DJ BROOK</h1>
             </div>
             <div class="header-right">
                 <div class="status-badge" id="connectionStatus">
                     <span class="status-dot"></span>
                     <span class="status-text">Conectando...</span>
+                </div>
+                <div class="user-info" id="user-info" style="display:none">
+                    <span id="user-display"></span>
+                    <button class="btn-logout" id="logoutBtn" title="Cerrar sesión">🚪</button>
                 </div>
                 <button class="btn-revive" id="reviveBtn" title="Revivir stickers">☠️</button>
                 <button class="btn-settings" id="settingsToggle" title="Configurar servidor">⚙️</button>
@@ -28,20 +35,20 @@
         <!-- Panel de Configuración del Backend -->
         <div class="settings-panel hidden" id="settingsPanel">
             <div class="card">
-                <h3>🔧 Configuración del Servidor</h3>
+                <h3>⚙ CONFIG SERVIDOR</h3>
                 <div class="settings-info">
                     <span class="label">Servidor actual:</span>
                     <code id="currentBackendUrl">-</code>
                 </div>
                 <div class="input-group">
-                    <label for="backendUrlInput">URL del Backend</label>
+                    <label for="backendUrlInput">URL DEL BACKEND</label>
                     <input
                         type="text"
                         id="backendUrlInput"
-                        placeholder="https://tu-servidor.com o dejar vacío para local"
+                        placeholder="https://tu-tunel.trycloudflare.com"
                     >
                     <div class="input-hint">
-                        Deja vacío para usar el servidor local. Para conexión remota, introduce la URL del túnel (ej: https://tu-tunel.trycloudflare.com)
+                        Deja vacío para usar el servidor local
                     </div>
                 </div>
                 <div class="button-group-small">
@@ -55,220 +62,237 @@
             </div>
         </div>
 
-        <!-- Main Content -->
+        <!-- Main Content — 2 column layout -->
         <main class="main-content">
-            <!-- Current Song Display -->
-            <div class="now-playing">
-                <div class="now-playing-icon">🎧</div>
-                <div class="now-playing-info">
-                    <div class="label">Reproduciendo Ahora</div>
-                    <div class="song-title" id="currentSong">Ninguna canción</div>
-                    <div class="song-status" id="songStatus">
-                        <span class="status-indicator stopped"></span>
-                        <span id="statusText">Detenido</span>
-                    </div>
-                    <!-- Progress Bar -->
-                    <div class="progress-container">
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progressFill"></div>
-                        </div>
-                        <div class="progress-time">
-                            <span id="currentTime">0:00</span>
-                            <span id="totalTime">0:00</span>
-                        </div>
-                    </div>
-                    <!-- Waveform -->
-                    <canvas id="waveformCanvas" class="waveform-canvas"></canvas>
-                </div>
-                <button class="btn-pause-resume" id="pauseResumeBtn" title="Pausar / Reanudar" style="display:none">
-                    ⏸
-                </button>
-            </div>
 
-            <!-- Controls Card -->
-            <div class="card">
-                <h2>🎮 Controles</h2>
-                
-                <!-- URL Input -->
-                <div class="input-group">
-                    <label for="urlInput">Canción, artista o URL</label>
-                    <div class="input-with-button">
-                        <input
-                            type="text"
-                            id="urlInput"
-                            placeholder="Ej: Bohemian Rhapsody, url de YouTube, Suno..."
-                            autocomplete="off"
-                        >
-                        <button class="btn btn-icon" id="clearBtn" title="Limpiar">
-                            ✕
+            <!-- LEFT: Now Playing + Controls -->
+            <div class="main-col">
+
+                <!-- Current Song Display -->
+                <div class="now-playing">
+                    <div class="now-playing-icon">🎧</div>
+                    <div class="now-playing-info">
+                        <div class="label">▶ NOW PLAYING</div>
+                        <div class="song-title" id="currentSong">NINGUNA CANCION</div>
+                        <div class="now-playing-meta">
+                            <div class="song-status" id="songStatus">
+                                <span class="status-indicator stopped"></span>
+                                <span id="statusText">Detenido</span>
+                            </div>
+                            <div class="now-playing-user" id="nowPlayingUser" style="display:none"></div>
+                        </div>
+                        <!-- Progress Bar -->
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-time">
+                                <span id="currentTime">0:00</span>
+                                <span id="totalTime">0:00</span>
+                            </div>
+                        </div>
+                        <!-- Waveform -->
+                        <canvas id="waveformCanvas" class="waveform-canvas"></canvas>
+                    </div>
+                    <button class="btn-pause-resume" id="pauseResumeBtn" title="Pausar / Reanudar" style="display:none">
+                        ⏸
+                    </button>
+                </div>
+
+                <!-- Controls Card -->
+                <div class="card" id="controls-card">
+                    <h2>🎮 CONTROLES</h2>
+                    <div class="input-group">
+                        <label for="urlInput">CANCION / ARTISTA / URL</label>
+                        <div class="input-with-button">
+                            <input
+                                type="text"
+                                id="urlInput"
+                                placeholder="Bohemian Rhapsody, URL de YouTube, Suno..."
+                                autocomplete="off"
+                            >
+                            <button class="btn btn-icon" id="clearBtn" title="Limpiar">✕</button>
+                        </div>
+                        <div class="input-hint">YouTube · Spotify · Suno · búsqueda por texto</div>
+                    </div>
+                    <div class="button-group">
+                        <button class="btn btn-primary" id="playBtn">
+                            <span class="btn-icon">▶</span>
+                            PLAY
+                        </button>
+                        <button class="btn btn-secondary" id="addQueueBtn">
+                            <span class="btn-icon">+</span>
+                            QUEUE
+                        </button>
+                        <button class="btn btn-accent" id="createPlaylistBtn">
+                            <span class="btn-icon">🎲</span>
+                            PLAYLIST
+                        </button>
+                        <button class="btn btn-danger" id="stopBtn">
+                            <span class="btn-icon">■</span>
+                            STOP
                         </button>
                     </div>
-                    <div class="input-hint">
-                        Escribe el nombre de una canción, artista o pega una URL de YouTube o Suno
+                </div>
+
+            </div><!-- /main-col -->
+
+            <!-- RIGHT: Sidebar -->
+            <div class="sidebar-col">
+
+                <!-- Queue Card -->
+                <div class="card" id="queue-card">
+                    <div class="queue-header">
+                        <h2>📜 QUEUE</h2>
+                        <span class="queue-count" id="queueCount">0</span>
+                    </div>
+                    <div class="queue-container" id="queueContainer">
+                        <div class="empty-queue">
+                            <span class="empty-icon">📭</span>
+                            <p>Cola vacía</p>
+                            <small>Agrega canciones o playlists</small>
+                        </div>
+                    </div>
+                    <div class="queue-actions">
+                        <button class="btn btn-secondary" id="skipBtn" disabled>
+                            <span class="btn-icon">⏭</span>
+                            SKIP
+                        </button>
+                        <button class="btn btn-danger" id="clearQueueBtn" disabled>
+                            <span class="btn-icon">🗑</span>
+                            CLEAR
+                        </button>
                     </div>
                 </div>
 
-                <!-- Control Buttons -->
-                <div class="button-group">
-                    <button class="btn btn-primary" id="playBtn">
-                        <span class="btn-icon">▶️</span>
-                        Reproducir
-                    </button>
-                    <button class="btn btn-secondary" id="addQueueBtn">
-                        <span class="btn-icon">➕</span>
-                        Añadir a Cola
-                    </button>
-                    <button class="btn btn-accent" id="createPlaylistBtn">
-                        <span class="btn-icon">🎲</span>
-                        Crear Playlist
-                    </button>
-                    <button class="btn btn-secondary" id="stopBtn">
-                        <span class="btn-icon">⏹️</span>
-                        Detener
-                    </button>
-                </div>
-            </div>
-
-            <!-- Radio Clip Card -->
-            <div class="card">
-                <h2>🎙️ Clip de Radio</h2>
-
-                <!-- URL input -->
-                <div class="input-group">
-                    <label for="clipInput">URL o canción para el clip</label>
-                    <div class="input-with-button">
-                        <input
-                            type="text"
-                            id="clipInput"
-                            placeholder="URL o nombre del clip (máx. 20 seg)"
-                            autocomplete="off"
-                        >
+                <!-- Radio Clip Card -->
+                <div class="card" id="clip-card">
+                    <h2>🎙 RADIO CLIP</h2>
+                    <div class="input-group">
+                        <label for="clipInput">URL O CANCION DEL CLIP</label>
+                        <div class="input-with-button">
+                            <input
+                                type="text"
+                                id="clipInput"
+                                placeholder="URL o nombre (máx. 20 seg)"
+                                autocomplete="off"
+                            >
+                        </div>
+                    </div>
+                    <div class="input-group" style="margin-top:6px;">
+                        <label>O ADJUNTA ARCHIVO DE AUDIO</label>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
+                            <label class="btn btn-secondary" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin:0; padding:8px 14px;">
+                                <span>📎</span>
+                                <span id="clipFileLabel">Adjuntar archivo</span>
+                                <input type="file" id="clipFileInput" accept="audio/*,video/*" style="display:none">
+                            </label>
+                            <button class="btn btn-secondary" id="clipFileClearBtn" title="Quitar archivo" style="display:none; padding:6px 10px;">✕</button>
+                        </div>
+                        <div class="input-hint">MP3 · WAV · OGG · FLAC</div>
+                    </div>
+                    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="min-width:140px; font-size:0.78em; color:var(--text-muted);">♪ MUSICA CLIP</span>
+                            <input type="range" id="clipMusicVolumeSlider" min="0" max="100" value="40" style="flex:1; cursor:pointer; accent-color:var(--primary);">
+                            <span id="clipMusicVolumeValue" style="min-width:38px; text-align:right; font-size:0.78em; font-weight:600;">40%</span>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="min-width:140px; font-size:0.78em; color:var(--text-muted);">🎙 VOL CLIP</span>
+                            <input type="range" id="clipVolumeSlider" min="0" max="200" value="100" style="flex:1; cursor:pointer; accent-color:var(--pink);">
+                            <span id="clipVolumeValue" style="min-width:38px; text-align:right; font-size:0.78em; font-weight:600;">100%</span>
+                        </div>
+                    </div>
+                    <div class="button-group" style="margin-top:14px;">
+                        <button class="btn btn-accent" id="clipBtn">
+                            <span class="btn-icon">🎙</span>
+                            CLIP
+                        </button>
+                        <button class="btn btn-secondary" id="clipStopBtn" style="display:none">
+                            <span class="btn-icon">■</span>
+                            STOP CLIP
+                        </button>
+                    </div>
+                    <div id="clipStatus" style="display:none; margin-top:12px; padding:8px 12px; background:rgba(255,140,0,0.12); border-left:3px solid var(--orange); border-radius:2px; font-size:0.78em; color:var(--orange);">
+                        ▶▶ <span id="clipStatusText">Clip sonando...</span>
                     </div>
                 </div>
 
-                <!-- Local file input -->
-                <div class="input-group" style="margin-top:6px;">
-                    <label>O adjunta un archivo de audio local</label>
-                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
-                        <label class="btn btn-secondary" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin:0; padding:8px 14px;">
-                            <span>📎</span>
-                            <span id="clipFileLabel">Adjuntar archivo</span>
-                            <input type="file" id="clipFileInput" accept="audio/*,video/*" style="display:none">
-                        </label>
-                        <button class="btn btn-secondary" id="clipFileClearBtn" title="Quitar archivo" style="display:none; padding:6px 10px;">✕</button>
-                    </div>
-                    <div class="input-hint">MP3, WAV, OGG, FLAC y otros formatos soportados</div>
-                </div>
-
-                <!-- Volume controls -->
-                <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <span style="min-width:155px; font-size:0.84em; color:var(--text-muted,#999);">🎵 Música durante clip</span>
-                        <input type="range" id="clipMusicVolumeSlider" min="0" max="100" value="40" style="flex:1; cursor:pointer; accent-color:#ffa500;">
-                        <span id="clipMusicVolumeValue" style="min-width:38px; text-align:right; font-size:0.84em; font-weight:600;">40%</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <span style="min-width:155px; font-size:0.84em; color:var(--text-muted,#999);">🎙️ Volumen del clip</span>
-                        <input type="range" id="clipVolumeSlider" min="0" max="200" value="100" style="flex:1; cursor:pointer; accent-color:#a855f7;">
-                        <span id="clipVolumeValue" style="min-width:38px; text-align:right; font-size:0.84em; font-weight:600;">100%</span>
+                <!-- Quick Links -->
+                <div class="card quick-links">
+                    <h3>🔗 LINKS</h3>
+                    <div class="link-grid">
+                        <a href="https://www.youtube.com" target="_blank" class="quick-link">
+                            <span class="link-icon">📺</span>
+                            YouTube
+                        </a>
+                        <a href="https://music.youtube.com" target="_blank" class="quick-link">
+                            <span class="link-icon">🎵</span>
+                            YT Music
+                        </a>
+                        <a href="https://discord.com" target="_blank" class="quick-link">
+                            <span class="link-icon">💬</span>
+                            Discord
+                        </a>
                     </div>
                 </div>
 
-                <!-- Action buttons -->
-                <div class="button-group" style="margin-top:14px;">
-                    <button class="btn btn-accent" id="clipBtn">
-                        <span class="btn-icon">🎙️</span>
-                        Poner Clip
-                    </button>
-                    <button class="btn btn-secondary" id="clipStopBtn" style="display:none">
-                        <span class="btn-icon">⏹️</span>
-                        Parar Clip
-                    </button>
-                </div>
-
-                <!-- Active clip status -->
-                <div id="clipStatus" style="display:none; margin-top:12px; padding:8px 12px; background:rgba(255,165,0,0.12); border-left:3px solid #ffa500; border-radius:4px; font-size:0.9em; color:#ffa500;">
-                    📻 <span id="clipStatusText">Clip sonando...</span>
-                </div>
-            </div>
-
-            <!-- Queue Card -->
-            <div class="card">
-                <div class="queue-header">
-                    <h2>📜 Cola de Reproducción</h2>
-                    <span class="queue-count" id="queueCount">0 canciones</span>
-                </div>
-                
-                <div class="queue-container" id="queueContainer">
-                    <div class="empty-queue">
-                        <span class="empty-icon">📭</span>
-                        <p>Cola vacía</p>
-                        <small>Agrega canciones o playlists para comenzar</small>
-                    </div>
-                </div>
-                
-                <div class="queue-actions">
-                    <button class="btn btn-secondary" id="skipBtn" disabled>
-                        <span class="btn-icon">⏭️</span>
-                        Saltar
-                    </button>
-                    <button class="btn btn-secondary" id="clearQueueBtn" disabled>
-                        <span class="btn-icon">🗑️</span>
-                        Limpiar Cola
-                    </button>
-                </div>
-            </div>
-
-            <!-- Quick Links -->
-            <div class="card quick-links">
-                <h3>🔗 Enlaces Rápidos</h3>
-                <div class="link-grid">
-                    <a href="https://www.youtube.com" target="_blank" class="quick-link">
-                        <span class="link-icon">📺</span>
-                        YouTube
-                    </a>
-                    <a href="https://music.youtube.com" target="_blank" class="quick-link">
-                        <span class="link-icon">🎵</span>
-                        YouTube Music
-                    </a>
-                    <a href="https://discord.com" target="_blank" class="quick-link">
-                        <span class="link-icon">💬</span>
-                        Discord
-                    </a>
-                </div>
-            </div>
-
-            <!-- Instructions -->
-            <div class="card instructions">
-                <h3>📋 Instrucciones</h3>
-                <ol>
-                    <li>
-                        <strong>Busca o pega:</strong>
-                        Escribe el nombre de una canción o artista, o pega una URL de YouTube / Suno
-                    </li>
-                    <li>
-                        <strong>Reproduce:</strong>
-                        Haz clic en "Reproducir" y la música se transmitirá a Discord
-                    </li>
-                    <li>
-                        <strong>Gestiona la cola:</strong>
-                        Añade más canciones, salta o limpia la cola según necesites
-                    </li>
-                </ol>
-            </div>
+            </div><!-- /sidebar-col -->
         </main>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <p>Hecho con ❤️ para compartir música en Discord</p>
-            <p class="footer-note">Recuerda: Esta cuenta debe estar en la llamada de Discord</p>
-        </footer>
     </div>
 
     <!-- Notification Container -->
     <div id="notifications"></div>
 
+    <!-- Auth Overlay -->
+    <div id="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-logo">
+                <img src="assets/brokIcon.jpg" alt="Brook" class="auth-brook-icon">
+                <h2>DISCORD<br>DJ BROOK</h2>
+                <p class="auth-subtitle">CONTROLADOR MUSICAL v2.0</p>
+            </div>
+
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="auth-tab-login">&gt; LOGIN</button>
+                <button class="auth-tab" id="auth-tab-register">REGISTER</button>
+            </div>
+
+            <!-- Login -->
+            <div id="auth-login-form">
+                <div class="input-group">
+                    <label for="auth-username">USUARIO</label>
+                    <input type="text" id="auth-username" placeholder="tu_nombre_de_usuario" autocomplete="username">
+                </div>
+                <div class="input-group">
+                    <label for="auth-password">CONTRASEÑA</label>
+                    <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
+                </div>
+                <div id="auth-login-error" class="auth-error" style="display:none"></div>
+                <button class="btn btn-primary auth-submit" id="auth-login-btn">▶ INICIAR SESION</button>
+            </div>
+
+            <!-- Registro -->
+            <div id="auth-register-form" style="display:none">
+                <div class="input-group">
+                    <label for="reg-username">USUARIO</label>
+                    <input type="text" id="reg-username" placeholder="elige_un_nombre" autocomplete="username">
+                </div>
+                <div class="input-group">
+                    <label for="reg-password">CONTRASEÑA</label>
+                    <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+                </div>
+                <div id="auth-register-error" class="auth-error" style="display:none"></div>
+                <button class="btn btn-primary auth-submit" id="auth-register-btn">+ REGISTRARSE</button>
+            </div>
+
+        </div>
+        <!-- Scan line animation -->
+        <div class="auth-scanline"></div>
+    </div>
+
     <script src="js/config.js"></script>
+    <script src="js/auth.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

@@ -256,7 +256,7 @@ const STICKER_VW = 1920, STICKER_VH = 1080;  // espacio virtual del servidor
 
 const StickersSystem = (() => {
     let overlay   = null;
-    let els       = {};        // id → { img, livesEl, wrapper }
+    let els       = {};        // id → { img, nameEl, wrapper }
     let grabbedId = null;
     const mouseHistory = [];   // {x, y, t} últimos 80ms
 
@@ -272,19 +272,19 @@ const StickersSystem = (() => {
 
     // ── Crear/obtener elemento para un sticker ────────────────────────────
     function getOrCreate(id, url) {
-        if (els[id]) return els[id];  // URL de GIF no cambia para un ID dado
+        if (els[id]) return els[id];
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;';
 
-        const livesEl = document.createElement('div');
-        livesEl.className = 'sticker-lives';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'sticker-name';
 
         const img = document.createElement('img');
         img.src       = url.startsWith('/') ? `${getBackendUrl()}${url}` : url;
         img.className = 'sticker';
         img.draggable = false;
 
-        wrapper.appendChild(livesEl);
+        wrapper.appendChild(nameEl);
         wrapper.appendChild(img);
         overlay.appendChild(wrapper);
 
@@ -295,7 +295,7 @@ const StickersSystem = (() => {
             sendToServer({ type: 'grab', id });
         });
 
-        els[id] = { img, livesEl, wrapper };
+        els[id] = { img, nameEl, wrapper };
         return els[id];
     }
 
@@ -349,7 +349,7 @@ const StickersSystem = (() => {
     const MAX_LIVES  = 5;
 
     function applyToDOM(s, cx, cy) {
-        const { img, livesEl, wrapper } = getOrCreate(s.id, s.gifUrl);
+        const { img, nameEl, wrapper } = getOrCreate(s.id, s.gifUrl);
         const W         = window.innerWidth;
         const H         = window.innerHeight;
         const scaleX    = W / STICKER_VW;
@@ -368,10 +368,9 @@ const StickersSystem = (() => {
         if (s.invincible) img.classList.add('invincible');
         else              img.classList.remove('invincible');
 
-        const isSurvivor = Object.keys(stickersData).length === 1;
-        const hearts = '❤️'.repeat(Math.max(0, s.lives)) + '🖤'.repeat(Math.max(0, MAX_LIVES - s.lives));
-        livesEl.textContent   = hearts;
-        livesEl.style.display = isSurvivor ? 'none' : '';
+        // Nombre del usuario encima del GIF
+        nameEl.textContent  = s.username || '';
+        nameEl.style.width  = pxSize + 'px';
     }
 
     function startRenderLoop() {
@@ -590,27 +589,27 @@ const WaveformRenderer = (() => {
     return { init, onData, setPlaying };
 })();
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initApp() {
     console.log('[Init] Iniciando...');
-
-    // Inicializar UI primero
     initBackendSettings();
     attachEventListeners();
-
-    // Intentar conectar
     await tryConnect();
-
-    // Iniciar stickers y waveform
     StickersSystem.init();
     WaveformRenderer.init();
-
-    // Reintentar cargar config cada 10 segundos si no está conectado
     setInterval(async () => {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             console.log('[AutoRetry] Reintentando cargar configuración...');
             await tryConnect();
         }
     }, 10000);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.djAuthenticated) {
+        initApp();
+    } else {
+        window.djPendingInit = initApp;
+    }
 });
 
 async function tryConnect() {
@@ -1084,6 +1083,22 @@ function updateNowPlaying(song) {
     if (elements.currentSong) {
         elements.currentSong.textContent = song.title || 'Ninguna canción';
     }
+
+    // Mostrar quién añadió la canción
+    let nowPlayingUser = document.getElementById('nowPlayingUser');
+    if (!nowPlayingUser) {
+        nowPlayingUser = document.createElement('div');
+        nowPlayingUser.id = 'nowPlayingUser';
+        nowPlayingUser.className = 'now-playing-user';
+        elements.currentSong.insertAdjacentElement('afterend', nowPlayingUser);
+    }
+    if (song.addedBy && (song.status === 'playing' || song.status === 'paused')) {
+        const loc = song.addedLocation ? ' · 📍 ' + escapeHtml(song.addedLocation) : '';
+        nowPlayingUser.innerHTML = '👤 ' + escapeHtml(song.addedBy) + loc;
+        nowPlayingUser.style.display = '';
+    } else {
+        nowPlayingUser.style.display = 'none';
+    }
     
     // Actualizar estado
     if (elements.statusText) {
@@ -1175,7 +1190,10 @@ function updateQueueDisplay(queue = []) {
                 <div class="queue-item-number">${index + 1}</div>
                 <div class="queue-item-info" onclick="playFromQueue(${index})" title="Clic para reproducir ahora">
                     <div class="queue-item-title">${escapeHtml(title)}</div>
-                    <div class="queue-item-duration">${formatTime(duration)}</div>
+                    <div class="queue-item-meta">
+                        ${duration > 0 ? `<span class="queue-item-duration">${formatTime(duration)}</span>` : ''}
+                        ${song.addedBy ? `<span class="queue-item-user">👤 ${escapeHtml(song.addedBy)}${song.addedLocation ? ' · 📍 ' + escapeHtml(song.addedLocation) : ''}</span>` : ''}
+                    </div>
                 </div>
                 <button class="queue-item-remove" onclick="removeFromQueue(${index})" title="Eliminar">✕</button>
             </div>

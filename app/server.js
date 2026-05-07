@@ -8,12 +8,102 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const YTDlpWrap = require('yt-dlp-wrap').default;
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const STATE_FILE      = path.join(__dirname, 'data',   'player-state.json');
 const CONFIG_FILE     = path.join(__dirname, 'config', 'server-config.json');
 const TUNNEL_URL_FILE = path.join(__dirname, 'data',   'tunnel-url.txt');
+const USERS_FILE      = path.join(__dirname, 'data',   'users.json');
+
+// ===== SISTEMA DE AUTENTICACIÓN =====
+
+let users = [];
+const sessions = new Map(); // token → { userId, username, locationLabel, expiresAt }
+
+function loadUsers() {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+    }
+  } catch (e) { users = []; }
+}
+
+function saveUsers() {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  } catch (e) {
+    console.log('[Auth] Error guardando usuarios:', e.message);
+  }
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { hash, salt };
+}
+
+function verifyPassword(password, hash, salt) {
+  try {
+    const test = crypto.scryptSync(password, salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(test, 'hex'));
+  } catch { return false; }
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function getClientIp(req) {
+  return (req.headers['cf-connecting-ip']
+    || req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+    || req.socket?.remoteAddress
+    || '127.0.0.1').replace(/^::ffff:/, '');
+}
+
+function getIpLocation(ip) {
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') {
+    return Promise.resolve({ country: 'Local', countryCode: 'LOCAL', region: 'LOCAL', city: 'Local', isLocal: true });
+  }
+  return new Promise((resolve) => {
+    const ipReq = http.get(
+      `http://ip-api.com/json/${ip}?fields=status,country,countryCode,region,regionName,city,query`,
+      (ipRes) => {
+        let data = '';
+        ipRes.on('data', c => data += c);
+        ipRes.on('end', () => {
+          try {
+            const p = JSON.parse(data);
+            if (p.status === 'success') {
+              resolve({ country: p.country, countryCode: p.countryCode, region: p.region, regionName: p.regionName, city: p.city });
+            } else {
+              resolve(null);
+            }
+          } catch { resolve(null); }
+        });
+      }
+    );
+    ipReq.on('error', () => resolve(null));
+    ipReq.setTimeout(5000, () => { ipReq.destroy(); resolve(null); });
+  });
+}
+
+function requireAuth(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'No autenticado' });
+  const session = sessions.get(token);
+  if (!session) return res.status(401).json({ error: 'Sesión inválida' });
+  if (Date.now() > session.expiresAt) {
+    sessions.delete(token);
+    return res.status(401).json({ error: 'Sesión expirada' });
+  }
+  req.user = session;
+  next();
+}
+
+loadUsers();
 
 // Variable global para la URL del túnel
 let tunnelUrl = '';
@@ -164,6 +254,145 @@ async function getYouTubeMix(videoId) {
   return lines.map(l => JSON.parse(l));
 }
 
+// ===== SOPORTE SPOTIFY =====
+
+function isSpotifyUrl(url) {
+  return /open\.spotify\.com\/(?:intl-[a-z-]+\/)?(track|album|playlist)\/[A-Za-z0-9]+/i.test(url);
+}
+
+function getSpotifyType(url) {
+  const m = url.match(/open\.spotify\.com\/(?:intl-[a-z-]+\/)?(track|album|playlist)\//i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+// Devuelve una query de búsqueda "Título Artista" para un track de Spotify.
+// Intenta yt-dlp primero, luego scraping HTML.
+async function resolveSpotifyTrack(url) {
+  // 1. yt-dlp (funciona en algunas instalaciones)
+  try {
+    const args = ['--dump-json', '--no-download', url];
+    const output = await ytDlpWrap.execPromise(args);
+    const info = JSON.parse(output.trim().split('\n')[0]);
+    if (info?.title) {
+      const artist = Array.isArray(info.artists)
+        ? info.artists.join(', ')
+        : (info.artist || info.creator || '');
+      const q = artist ? `${info.title} ${artist}` : info.title;
+      console.log(`[Spotify] yt-dlp → "${q}"`);
+      return q;
+    }
+  } catch {}
+
+  // 2. Scraping HTML (JSON-LD → og:title)
+  const html = await fetchPageHtml(url);
+
+  const ldMatch = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
+  if (ldMatch) {
+    try {
+      const ld = JSON.parse(ldMatch[1]);
+      const name = ld.name;
+      const byArtist = Array.isArray(ld.byArtist)
+        ? ld.byArtist.map(a => a.name).join(', ')
+        : (ld.byArtist?.name || '');
+      if (name) {
+        const q = byArtist ? `${name} ${byArtist}` : name;
+        console.log(`[Spotify] JSON-LD → "${q}"`);
+        return q;
+      }
+    } catch {}
+  }
+
+  const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/i)?.[1]
+               || html.match(/content="([^"]+)"\s+property="og:title"/i)?.[1];
+  if (ogTitle) {
+    console.log(`[Spotify] og:title → "${ogTitle}"`);
+    return ogTitle;
+  }
+
+  throw new Error('No se pudo obtener información de la pista de Spotify');
+}
+
+// Devuelve array de queries "Título Artista" para un álbum/playlist de Spotify.
+async function resolveSpotifyCollection(url) {
+  console.log('[Spotify] Obteniendo colección:', url);
+
+  // 1. yt-dlp flat-playlist
+  try {
+    const args = ['--dump-json', '--no-download', '--flat-playlist', url];
+    const output = await ytDlpWrap.execPromise(args);
+    const lines = output.trim().split('\n').filter(l => l.trim());
+    if (lines.length > 0) {
+      const queries = lines.map(l => {
+        try {
+          const e = JSON.parse(l);
+          if (!e.title) return null;
+          const artist = Array.isArray(e.artists)
+            ? e.artists.join(', ')
+            : (e.artist || e.creator || '');
+          return artist ? `${e.title} ${artist}` : e.title;
+        } catch { return null; }
+      }).filter(Boolean);
+      if (queries.length > 0) {
+        console.log(`[Spotify] yt-dlp extrajo ${queries.length} pistas`);
+        return queries;
+      }
+    }
+  } catch (e) {
+    console.log('[Spotify] yt-dlp colección falló:', e.message);
+  }
+
+  // 2. JSON-LD scraping
+  try {
+    const html = await fetchPageHtml(url);
+    const ldMatch = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
+    if (ldMatch) {
+      const ld = JSON.parse(ldMatch[1]);
+      const tracks = ld.track || ld.tracks || [];
+      if (Array.isArray(tracks) && tracks.length > 0) {
+        const albumArtist = Array.isArray(ld.byArtist)
+          ? ld.byArtist.map(a => a.name).join(', ')
+          : (ld.byArtist?.name || '');
+        const queries = tracks.map(t => {
+          if (!t.name) return null;
+          const artist = Array.isArray(t.byArtist)
+            ? t.byArtist.map(a => a.name).join(', ')
+            : (t.byArtist?.name || albumArtist);
+          return artist ? `${t.name} ${artist}` : t.name;
+        }).filter(Boolean);
+        if (queries.length > 0) {
+          console.log(`[Spotify] JSON-LD extrajo ${queries.length} pistas`);
+          return queries;
+        }
+      }
+    }
+  } catch {}
+
+  throw new Error('No se pudieron obtener las pistas de Spotify. Comparte canciones individuales o usa una lista pública.');
+}
+
+// Busca en YouTube N queries de forma concurrente (lotes de 5).
+// Devuelve array de { url, title, duration }.
+async function batchSearchYouTube(queries, maxResults = MAX_QUEUE) {
+  const limited = queries.slice(0, maxResults);
+  const CONCURRENT = 5;
+  const results = [];
+  for (let i = 0; i < limited.length; i += CONCURRENT) {
+    const batch = limited.slice(i, i + CONCURRENT);
+    const batchResults = await Promise.all(
+      batch.map(async q => {
+        try {
+          const { info, playUrl } = await searchYouTube(q);
+          return { url: playUrl, title: info.title, duration: info.duration || 0 };
+        } catch { return null; }
+      })
+    );
+    results.push(...batchResults.filter(Boolean));
+  }
+  return results;
+}
+
+// ===== FIN SOPORTE SPOTIFY =====
+
 // Detecta si el input es una URL válida o texto libre
 function isUrl(input) {
   return /^https?:\/\//i.test(input) || /^www\./i.test(input);
@@ -198,10 +427,28 @@ async function searchYouTube(query) {
 }
 
 // Resuelve cualquier input y devuelve { info, playUrl }
-// - Suno URL:     bypasa yt-dlp, playUrl = CDN MP3 directo
-// - YouTube URL:  usa yt-dlp, playUrl = url original
-// - Texto libre:  busca en YouTube el resultado más relevante
+// - Spotify track:      busca en YouTube tras extraer título+artista
+// - Spotify album/list: devuelve info.entries (YouTube search x pista)
+// - Suno URL:           bypasa yt-dlp, playUrl = CDN MP3 directo
+// - YouTube URL:        usa yt-dlp, playUrl = url original
+// - Texto libre:        busca en YouTube el resultado más relevante
 async function resolveTrackInfo(input) {
+  if (isSpotifyUrl(input)) {
+    const type = getSpotifyType(input);
+    if (type === 'track') {
+      const query = await resolveSpotifyTrack(input);
+      console.log(`[Spotify] Buscando en YouTube: "${query}"`);
+      return await searchYouTube(query);
+    }
+    if (type === 'album' || type === 'playlist') {
+      const queries = await resolveSpotifyCollection(input);
+      const limit = Math.min(queries.length, MAX_QUEUE);
+      console.log(`[Spotify] Buscando ${limit} pistas en YouTube...`);
+      const entries = await batchSearchYouTube(queries, limit);
+      if (entries.length === 0) throw new Error('No se encontraron resultados en YouTube para las pistas de Spotify');
+      return { info: { entries, _type: 'playlist' }, playUrl: null };
+    }
+  }
   if (isSunoUrl(input)) {
     const suno = await getSunoInfo(input);
     return {
@@ -221,13 +468,16 @@ async function resolveTrackInfo(input) {
 // Estado global
 let currentProcess = null;
 let queue = []; // Cola de reproducción
+const MAX_QUEUE = 50; // Límite máximo de canciones en cola
 let currentSong = {
   url: '',
   title: 'Ninguna',
   status: 'stopped',
   index: -1,
   duration: 0,
-  startedAt: null
+  startedAt: null,
+  addedBy: null,
+  addedLocation: null
 };
 let savedAudioDevice = '';
 let activeConnections = 0;
@@ -577,29 +827,31 @@ const BeatAnalyzer = (() => {
 // Motor de física autorizado para los stickers. Todos los clientes reciben el
 // mismo estado sincronizado. La física y las colisiones corren en el servidor.
 // Coordenadas en espacio virtual 1920×1080 px (los clientes escalan al renderizar).
+// Cada sticker representa un usuario logeado: 1 usuario = 1 GIF con su nombre.
 const StickerServer = (() => {
-  const VIRTUAL_W    = 1920;
-  const VIRTUAL_H    = 1080;
-  const COUNT        = 7;
-  const BASE_SIZE    = 90;
-  const FRICTION     = 0.985;
-  const BOUNCE_DAMP  = 0.78;
-  const MAX_SPEED    = 1600;
-  const IDLE_SPEED   = 40;
-  const PLAY_SPEED   = 100;
-  const MAX_LIVES    = 5;
+  const VIRTUAL_W     = 1920;
+  const VIRTUAL_H     = 1080;
+  const BASE_SIZE     = 90;
+  const FRICTION      = 0.985;
+  const BOUNCE_DAMP   = 0.78;
+  const MAX_SPEED     = 1600;
+  const IDLE_SPEED    = 40;
+  const PLAY_SPEED    = 100;
+  const MAX_LIVES     = 5;
   const INVINCIBLE_MS = 5000;
-  const TICK_MS      = 50;   // física a 20 fps
-  const BCAST_EVERY  = 4;    // broadcast cada 4 ticks = 200 ms (5 fps)
-  const GRAVITY      = 1400; // px virtuales/s² al caer (sin música)
+  const TICK_MS       = 50;
+  const BCAST_EVERY   = 4;
+  const GRAVITY       = 1400;
 
-  let stickers    = [];
-  let gifUrls     = [];
-  let intervalId  = null;
-  let playing     = false;
-  let nextId      = 0;
-  let tickCount   = 0;
-  let nextClientId = 0;
+  let stickers      = [];
+  let gifUrls       = [];
+  let intervalId    = null;
+  let playing       = false;
+  let nextId        = 0;
+  let tickCount     = 0;
+  let nextClientId  = 0;
+  // userId → stickerId (sólo usuarios con sticker vivo)
+  const userStickers = new Map();
 
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -613,13 +865,14 @@ const StickerServer = (() => {
     } catch (_) { gifUrls = []; }
   }
 
-  function makeSticker(url) {
+  function makeSticker(url, username) {
     const angle = rnd(0, Math.PI * 2);
     return {
       id:               nextId++,
       gifUrl:           url,
+      username:         username || '',
       cx:               rnd(BASE_SIZE, VIRTUAL_W - BASE_SIZE),
-      cy:               rnd(BASE_SIZE, VIRTUAL_H - BASE_SIZE),
+      cy:               rnd(BASE_SIZE / 2, VIRTUAL_H / 2),  // spawnear en la mitad superior
       vx:               Math.cos(angle) * IDLE_SPEED,
       vy:               Math.sin(angle) * IDLE_SPEED,
       size:             BASE_SIZE * rnd(0.85, 1.2),
@@ -627,7 +880,7 @@ const StickerServer = (() => {
       lives:            MAX_LIVES,
       invincibleUntil:  0,
       pulse:            0,
-      grabbedBy:        null, // ws._clientId
+      grabbedBy:        null,
     };
   }
 
@@ -636,25 +889,48 @@ const StickerServer = (() => {
     wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) c.send(raw); });
   }
 
-  function broadcastState() {
+  function toWireSticker(s) {
     const now = Date.now();
-    broadcast({
-      type: 'stickers',
-      stickers: stickers.map(s => ({
-        id:         s.id,
-        gifUrl:     s.gifUrl,
-        cx:         s.cx,
-        cy:         s.cy,
-        vx:         s.vx,          // velocidad para interpolación en cliente
-        vy:         s.vy,
-        size:       s.size,
-        hue:        s.hue,
-        lives:      s.lives,
-        maxLives:   MAX_LIVES,
-        grabbed:    s.grabbedBy !== null,
-        invincible: now < s.invincibleUntil,
-      }))
-    });
+    return {
+      id:         s.id,
+      gifUrl:     s.gifUrl,
+      username:   s.username,
+      cx:         s.cx,
+      cy:         s.cy,
+      vx:         s.vx,
+      vy:         s.vy,
+      size:       s.size,
+      hue:        s.hue,
+      lives:      s.lives,
+      maxLives:   MAX_LIVES,
+      grabbed:    s.grabbedBy !== null,
+      invincible: now < s.invincibleUntil,
+    };
+  }
+
+  function broadcastState() {
+    broadcast({ type: 'stickers', stickers: stickers.map(toWireSticker) });
+  }
+
+  // Añadir sticker para un usuario que acaba de conectarse
+  function spawnForUser(session) {
+    if (!gifUrls.length || userStickers.has(session.userId)) return;
+    const s = makeSticker(pick(gifUrls), session.username);
+    stickers.push(s);
+    userStickers.set(session.userId, s.id);
+  }
+
+  function addUserSticker(session) {
+    spawnForUser(session);
+    broadcastState();
+  }
+
+  function removeUserSticker(userId) {
+    const sid = userStickers.get(userId);
+    if (sid === undefined) return;
+    stickers = stickers.filter(s => s.id !== sid);
+    userStickers.delete(userId);
+    broadcastState();
   }
 
   function checkCollisions() {
@@ -663,28 +939,25 @@ const StickerServer = (() => {
       for (let j = i + 1; j < stickers.length; j++) {
         const a = stickers[i], b = stickers[j];
         if (a.grabbedBy !== null || b.grabbedBy !== null) continue;
-        if (now < a.invincibleUntil || now < b.invincibleUntil)  continue;
+        if (now < a.invincibleUntil || now < b.invincibleUntil) continue;
 
         const dx   = b.cx - a.cx, dy = b.cy - a.cy;
         const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
         const minD = (a.size + b.size) / 2;
 
         if (dist < minD) {
-          // Quitar vida a ambos
           a.lives = Math.max(0, a.lives - 1);
           b.lives = Math.max(0, b.lives - 1);
           a.invincibleUntil = now + INVINCIBLE_MS;
           b.invincibleUntil = now + INVINCIBLE_MS;
           a.pulse = 1.8; b.pulse = 1.8;
 
-          // Rebote elástico
           const nx = dx / dist, ny = dy / dist;
           const dv = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
           if (dv > 0) {
             a.vx -= dv * nx; a.vy -= dv * ny;
             b.vx += dv * nx; b.vy += dv * ny;
           }
-          // Separar para que no se queden solapados
           const overlap = (minD - dist) / 2;
           a.cx -= overlap * nx; a.cy -= overlap * ny;
           b.cx += overlap * nx; b.cy += overlap * ny;
@@ -698,16 +971,20 @@ const StickerServer = (() => {
     const now = Date.now();
     tickCount++;
 
-    // Solo hay colisiones (y bajada de vidas) cuando hay música activa
     if (playing) checkCollisions();
 
-    // Eliminar muertos
+    // Eliminar muertos y sincronizar el mapa userId→stickerId
     const countBefore = stickers.length;
     stickers = stickers.filter(s => s.lives > 0);
-    const countAfter  = stickers.length;
+    if (stickers.length < countBefore) {
+      const aliveIds = new Set(stickers.map(s => s.id));
+      for (const [uid, sid] of userStickers.entries()) {
+        if (!aliveIds.has(sid)) userStickers.delete(uid);
+      }
+    }
 
-    // Cuando queda 1 → lo hacemos grande y avisamos (siempre broadcast inmediato)
-    if (countAfter === 1 && countBefore > 1) {
+    // Cuando queda 1 → lo hacemos grande y avisamos
+    if (stickers.length === 1 && countBefore > 1) {
       stickers[0].size = BASE_SIZE * 2.8;
       broadcast({ type: 'survivor', id: stickers[0].id });
       broadcastState();
@@ -721,12 +998,9 @@ const StickerServer = (() => {
       }
 
       if (!playing) {
-        // ── Modo gravedad (sin música / servidor desconectado) ───────────
-        // Caen hacia abajo sin empuje lateral ni colisiones
         s.vy += GRAVITY * dt;
-        s.vx *= 0.96;  // fricción lateral suave
+        s.vx *= 0.96;
       } else {
-        // ── Modo normal (con música) ─────────────────────────────────────
         const spd = Math.hypot(s.vx, s.vy);
         if (spd < PLAY_SPEED * 0.25) {
           const dir = rnd(0, Math.PI * 2);
@@ -742,13 +1016,12 @@ const StickerServer = (() => {
 
       const r = s.size / 2;
       let bounced = false;
-      if (s.cx - r < 0)          { s.cx = r;              s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
-      if (s.cx + r > VIRTUAL_W)  { s.cx = VIRTUAL_W - r;  s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
-      if (s.cy - r < 0)          { s.cy = r;              s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
-      if (s.cy + r > VIRTUAL_H)  {
+      if (s.cx - r < 0)         { s.cx = r;             s.vx =  Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+      if (s.cx + r > VIRTUAL_W) { s.cx = VIRTUAL_W - r; s.vx = -Math.abs(s.vx) * BOUNCE_DAMP; bounced = true; }
+      if (s.cy - r < 0)         { s.cy = r;             s.vy =  Math.abs(s.vy) * BOUNCE_DAMP; bounced = true; }
+      if (s.cy + r > VIRTUAL_H) {
         s.cy = VIRTUAL_H - r;
         if (!playing) {
-          // Suelo amortiguado: los stickers se apilan sin rebotar mucho
           s.vy = -Math.abs(s.vy) * 0.12;
           s.vx *= 0.75;
         } else {
@@ -761,7 +1034,6 @@ const StickerServer = (() => {
       s.pulse *= Math.pow(0.001, dt);
     });
 
-    // Broadcast de posiciones solo cada BCAST_EVERY ticks (5 fps)
     if (tickCount % BCAST_EVERY === 0) broadcastState();
   }
 
@@ -826,11 +1098,15 @@ const StickerServer = (() => {
   function revive() {
     nextId = 0;
     stickers = [];
-    for (let i = 0; i < COUNT; i++) {
-      stickers.push(makeSticker(gifUrls[i % gifUrls.length]));
-    }
+    userStickers.clear();
+    // Recrear un sticker por cada usuario autenticado conectado
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN && client.user) {
+        spawnForUser(client.user);
+      }
+    });
     broadcastState();
-    console.log('[StickerServer] Stickers revividos');
+    console.log(`[StickerServer] Revividos: ${stickers.length} stickers`);
   }
 
   function assignClientId(ws) {
@@ -838,26 +1114,18 @@ const StickerServer = (() => {
   }
 
   function sendStateTo(ws) {
-    const now = Date.now();
-    ws.send(JSON.stringify({
-      type: 'stickers',
-      stickers: stickers.map(s => ({
-        id: s.id, gifUrl: s.gifUrl, cx: s.cx, cy: s.cy, vx: s.vx, vy: s.vy,
-        size: s.size, hue: s.hue, lives: s.lives, maxLives: MAX_LIVES,
-        grabbed: s.grabbedBy !== null, invincible: now < s.invincibleUntil,
-      }))
-    }));
+    ws.send(JSON.stringify({ type: 'stickers', stickers: stickers.map(toWireSticker) }));
   }
 
   function init() {
     loadGifs();
     if (!gifUrls.length) { console.warn('[StickerServer] Sin GIFs'); return; }
-    revive();
+    stickers = [];   // sin usuarios → sin stickers
     intervalId = setInterval(tick, TICK_MS);
-    console.log(`[StickerServer] Iniciado con ${COUNT} stickers`);
+    console.log('[StickerServer] Iniciado (esperando usuarios)');
   }
 
-  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive };
+  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker };
 })();
 
 // Broadcast a todos los clientes conectados
@@ -897,12 +1165,23 @@ setInterval(() => {
   });
 }, 30000);
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Validar token desde query string: ?token=xxx
+  const qs = req.url.includes('?') ? req.url.split('?')[1] : '';
+  const token = new URLSearchParams(qs).get('token');
+  const wsSession = token ? sessions.get(token) : null;
+  if (!wsSession || Date.now() > wsSession.expiresAt) {
+    ws.send(JSON.stringify({ type: 'auth_error', message: 'No autenticado' }));
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+  ws.user = wsSession;
+
   activeConnections++;
   StickerServer.assignClientId(ws);
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
-  console.log(`Cliente WebSocket conectado (${activeConnections} activos, id=${ws._clientId})`);
+  console.log(`Cliente WebSocket conectado (${activeConnections} activos, id=${ws._clientId}, user=${wsSession.username})`);
 
   // Enviar estado actual al conectarse
   ws.send(JSON.stringify({
@@ -913,7 +1192,8 @@ wss.on('connection', (ws) => {
     type: 'config',
     data: { backendUrl: serverConfig.backendUrl, audioDevice: serverConfig.audioDevice || savedAudioDevice }
   }));
-  // Enviar estado de stickers al nuevo cliente
+  // Añadir sticker para este usuario y enviar estado completo
+  StickerServer.addUserSticker(wsSession);
   StickerServer.sendStateTo(ws);
 
   // Mensajes del cliente → StickerServer (grab, move, release, revive)
@@ -922,6 +1202,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     activeConnections--;
     StickerServer.handleDisconnect(ws);
+    StickerServer.removeUserSticker(wsSession.userId);
     console.log(`Cliente WebSocket desconectado (${activeConnections} activos)`);
   });
 });
@@ -1018,9 +1299,9 @@ async function playNext(audioDevice) {
   
   const nextSong = queue.shift();
   console.log(`Reproduciendo siguiente: ${nextSong.title}`);
-  
+
   try {
-    await playWithMPV(nextSong.url, audioDevice, nextSong.title);
+    await playWithMPV(nextSong.url, audioDevice, nextSong.title, nextSong.addedBy, nextSong.addedLocation);
   } catch (error) {
     console.error('Error reproduciendo siguiente:', error);
     // Si falla, intentar con la siguiente si hay más en la cola
@@ -1037,7 +1318,7 @@ async function playNext(audioDevice) {
 }
 
 // Función para reproducir con MPV
-async function playWithMPV(url, audioDevice, title = null) {
+async function playWithMPV(url, audioDevice, title = null, addedBy = null, addedLocation = null) {
   // Verificar si ya hay una reproducción iniciándose
   if (isStartingPlayback) {
     console.log('[MPV] Ya hay una reproducción iniciándose, ignorando...');
@@ -1070,6 +1351,8 @@ async function playWithMPV(url, audioDevice, title = null) {
       currentSong.status = 'playing';
       currentSong.duration = duration;
       currentSong.startedAt = Date.now();
+      currentSong.addedBy = addedBy;
+      currentSong.addedLocation = addedLocation;
       broadcastStatus();
       BeatAnalyzer.start(url);
       StickerServer.setPlaying(true);
@@ -1159,6 +1442,15 @@ async function playWithMPV(url, audioDevice, title = null) {
 
     if (title) {
       startPlayback(title, 0);
+      // Fetch duration in background and update once available
+      getVideoInfoWithArgs(url)
+        .then(info => {
+          if (info?.duration && currentSong.url === url) {
+            currentSong.duration = info.duration;
+            broadcastStatus();
+          }
+        })
+        .catch(() => {});
     } else {
       getVideoInfoWithArgs(url)
         .then(info => {
@@ -1173,6 +1465,102 @@ async function playWithMPV(url, audioDevice, title = null) {
     }
   });
 }
+
+// ===== RUTAS DE AUTENTICACIÓN =====
+
+// Detectar ubicación del cliente (sin auth)
+app.get('/api/auth/location', async (req, res) => {
+  const ip = getClientIp(req);
+  const location = await getIpLocation(ip);
+  res.json({ ip, location });
+});
+
+// Registro de nuevo usuario
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username?.trim() || !password) {
+    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+  }
+  if (users.find(u => u.username.toLowerCase() === username.trim().toLowerCase())) {
+    return res.status(400).json({ error: 'El nombre de usuario ya existe' });
+  }
+
+  const ip = getClientIp(req);
+  const location = await getIpLocation(ip);
+  const locationLabel = location?.isLocal
+    ? 'Local'
+    : [location?.city, location?.country].filter(Boolean).join(', ') || 'Desconocido';
+  const { hash, salt } = hashPassword(password);
+
+  const user = {
+    id: crypto.randomBytes(16).toString('hex'),
+    username: username.trim(),
+    passwordHash: hash,
+    passwordSalt: salt,
+    locationLabel,
+    allowedCountry: location?.countryCode || 'UNKNOWN',
+    allowedRegion: location?.region || '',
+    locationData: location,
+    registeredIp: ip,
+    createdAt: new Date().toISOString()
+  };
+
+  users.push(user);
+  saveUsers();
+  console.log(`[Auth] Registro: ${user.username} desde ${ip} (${location?.country || 'desconocido'})`);
+  res.json({ success: true });
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
+
+  const user = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
+  if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+  }
+
+  const ip = getClientIp(req);
+  if (user.allowedCountry !== 'LOCAL' && user.allowedCountry !== 'UNKNOWN') {
+    const loc = await getIpLocation(ip);
+    if (loc && !loc.isLocal && loc.countryCode !== user.allowedCountry) {
+      console.log(`[Auth] Denegado: ${user.username} desde ${ip} (${loc.country}) — esperado: ${user.allowedCountry}`);
+      return res.status(403).json({
+        error: `Acceso denegado. Tu ubicación actual (${loc.country}) no coincide con la ubicación registrada (${user.locationData?.country || user.allowedCountry}).`
+      });
+    }
+  }
+
+  const token = generateToken();
+  sessions.set(token, {
+    userId: user.id,
+    username: user.username,
+    locationLabel: user.locationLabel,
+    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
+  });
+
+  console.log(`[Auth] Login: ${user.username} desde ${ip}`);
+  res.json({ success: true, token, username: user.username, locationLabel: user.locationLabel });
+});
+
+// Logout
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  const token = req.headers['authorization']?.slice(7);
+  if (token) sessions.delete(token);
+  res.json({ success: true });
+});
+
+// Info del usuario actual
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json({ username: req.user.username, locationLabel: req.user.locationLabel });
+});
+
+// Proteger todas las rutas /api/* a partir de aquí
+app.use('/api', requireAuth);
 
 // API Endpoints
 
@@ -1201,11 +1589,16 @@ app.get('/api/status', (req, res) => {
 app.post('/api/play', async (req, res) => {
   const { url, audioDevice } = req.body;
   const startTime = Date.now();
-  
+
   if (!url) {
     return res.status(400).json({ error: 'URL requerida' });
   }
-  
+
+  // Cuando hay algo sonando, la canción se añade a la cola — verificar límite
+  if (currentSong.status === 'playing' && queue.length >= MAX_QUEUE) {
+    return res.status(429).json({ error: `Cola llena (máximo ${MAX_QUEUE} canciones)` });
+  }
+
   savedAudioDevice = audioDevice || savedAudioDevice;
   
   try {
@@ -1254,7 +1647,10 @@ app.post('/api/play', async (req, res) => {
             restEntries.push({
               url: entry.url,
               title: entry.title || `Video ${i}`,
-              addedAt: Date.now()
+              duration: entry.duration || 0,
+              addedAt: Date.now(),
+              addedBy: req.user?.username || null,
+              addedLocation: req.user?.locationLabel || null
             });
           }
         }
@@ -1263,9 +1659,11 @@ app.post('/api/play', async (req, res) => {
         // Reproducir el primero (sin setTimeout)
         try {
           await playWithMPV(
-            firstVideo.url, 
-            savedAudioDevice, 
-            firstVideo.title || `Video 1`
+            firstVideo.url,
+            savedAudioDevice,
+            firstVideo.title || `Video 1`,
+            req.user?.username || null,
+            req.user?.locationLabel || null
           );
           
           // Respuesta de éxito SOLO si llegó aquí
@@ -1286,7 +1684,7 @@ app.post('/api/play', async (req, res) => {
         // Hay algo sonando: insertar toda la playlist al frente de la cola sin interrumpir
         const newEntries = info.entries
           .filter(e => e && e.url)
-          .map(e => ({ url: e.url, title: e.title || 'Desconocido', addedAt: Date.now() }));
+          .map(e => ({ url: e.url, title: e.title || 'Desconocido', duration: e.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null }));
         queue.unshift(...newEntries);
         console.log(`[Play] Playlist añadida al frente de la cola: ${newEntries.length} canciones`);
         broadcastStatus();
@@ -1305,7 +1703,10 @@ app.post('/api/play', async (req, res) => {
         queue.unshift({
           url: playUrl,
           title: videoTitle,
-          addedAt: Date.now()
+          duration: info?.duration || 0,
+          addedAt: Date.now(),
+          addedBy: req.user?.username || null,
+          addedLocation: req.user?.locationLabel || null
         });
         console.log(`[Play] Añadido al frente de la cola: ${videoTitle}`);
         broadcastStatus();
@@ -1321,7 +1722,7 @@ app.post('/api/play', async (req, res) => {
         try {
           console.log(`[Play] Reproduciendo: ${videoTitle}`);
           const mpvStart = Date.now();
-          await playWithMPV(playUrl, savedAudioDevice, videoTitle);
+          await playWithMPV(playUrl, savedAudioDevice, videoTitle, req.user?.username || null, req.user?.locationLabel || null);
           const mpvTime = Date.now() - mpvStart;
           const totalTime = Date.now() - startTime;
           console.log(`[Play] ✅ Total: ${totalTime}ms (yt-dlp: ${infoTime}ms, mpv: ${mpvTime}ms)`);
@@ -1353,6 +1754,10 @@ app.post('/api/play-with-mix', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL o búsqueda requerida' });
 
+  if (queue.length >= MAX_QUEUE) {
+    return res.status(429).json({ error: `Cola llena (máximo ${MAX_QUEUE} canciones)` });
+  }
+
   try {
     const isPlaying = currentSong.status === 'playing';
 
@@ -1373,7 +1778,7 @@ app.post('/api/play-with-mix', async (req, res) => {
         .filter(Boolean)
         .map((e, i) => {
           const entryUrl = e.webpage_url || e.url || (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null);
-          return entryUrl ? { url: entryUrl, title: e.title || `Canción ${i + 1}`, addedAt: Date.now() } : null;
+          return entryUrl ? { url: entryUrl, title: e.title || `Canción ${i + 1}`, duration: e.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null } : null;
         })
         .filter(Boolean);
 
@@ -1382,18 +1787,19 @@ app.post('/api/play-with-mix', async (req, res) => {
       }
 
       if (isPlaying) {
-        queue.unshift(...songEntries);
+        const allowed = Math.max(0, MAX_QUEUE - queue.length);
+        queue.unshift(...songEntries.slice(0, allowed));
         broadcastStatus();
         return res.json({
           success: true,
-          message: `${songEntries.length} canciones añadidas al frente de la cola`,
-          mixSize: songEntries.length
+          message: `${Math.min(songEntries.length, allowed)} canciones añadidas al frente de la cola`,
+          mixSize: Math.min(songEntries.length, allowed)
         });
       } else {
         stopCurrentPlayback(true, true);
         const first = songEntries.shift();
         queue.unshift(...songEntries);
-        await playWithMPV(first.url, savedAudioDevice, first.title);
+        await playWithMPV(first.url, savedAudioDevice, first.title, req.user?.username || null, req.user?.locationLabel || null);
         return res.json({
           success: true,
           message: `Reproduciendo "${first.title}" + ${songEntries.length} canciones en cola`,
@@ -1410,25 +1816,26 @@ app.post('/api/play-with-mix', async (req, res) => {
       const rawEntries = info.entries || [];
       const songEntries = rawEntries
         .filter(e => e && e.url)
-        .map(e => ({ url: e.url, title: e.title || 'Desconocido', addedAt: Date.now() }));
+        .map(e => ({ url: e.url, title: e.title || 'Desconocido', duration: e.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null }));
 
       if (songEntries.length === 0) {
         return res.status(400).json({ error: 'No se pudieron obtener canciones de la playlist' });
       }
 
       if (isPlaying) {
-        queue.unshift(...songEntries);
+        const allowed = Math.max(0, MAX_QUEUE - queue.length);
+        queue.unshift(...songEntries.slice(0, allowed));
         broadcastStatus();
         return res.json({
           success: true,
-          message: `${songEntries.length} canciones de la playlist añadidas al frente`,
+          message: `${Math.min(songEntries.length, allowed)} canciones de la playlist añadidas al frente`,
           mixSize: songEntries.length
         });
       } else {
         stopCurrentPlayback(true, true);
         const first = songEntries.shift();
         queue.unshift(...songEntries);
-        await playWithMPV(first.url, savedAudioDevice, first.title);
+        await playWithMPV(first.url, savedAudioDevice, first.title, req.user?.username || null, req.user?.locationLabel || null);
         return res.json({
           success: true,
           message: `Reproduciendo playlist: "${first.title}" + ${songEntries.length} más`,
@@ -1448,7 +1855,7 @@ app.post('/api/play-with-mix', async (req, res) => {
       // No es YouTube (ej: Suno) → sin mix disponible
       console.log('[Mix] No es un vídeo de YouTube, reproduciendo sin mix');
       if (isPlaying) {
-        queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
+        queue.unshift({ url: basePlayUrl, title: baseInfo.title, duration: baseInfo.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null });
         broadcastStatus();
         return res.json({
           success: true,
@@ -1457,7 +1864,7 @@ app.post('/api/play-with-mix', async (req, res) => {
         });
       } else {
         stopCurrentPlayback(true, true);
-        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title, req.user?.username || null, req.user?.locationLabel || null);
         return res.json({
           success: true,
           message: `Reproduciendo "${baseInfo.title}" (mix no disponible para esta fuente)`,
@@ -1480,13 +1887,16 @@ app.post('/api/play-with-mix', async (req, res) => {
         const entryUrl = entry.webpage_url
           || entry.url
           || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : null);
-        return entryUrl ? { url: entryUrl, title: entry.title || `Canción ${i + 1}`, addedAt: Date.now() } : null;
+        return entryUrl ? { url: entryUrl, title: entry.title || `Canción ${i + 1}`, duration: entry.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null } : null;
       }).filter(Boolean);
 
       if (mixQueue.length === 0) {
-        queue.unshift({ url: basePlayUrl, title: baseInfo.title, addedAt: Date.now() });
+        if (queue.length < MAX_QUEUE) {
+          queue.unshift({ url: basePlayUrl, title: baseInfo.title, duration: baseInfo.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null });
+        }
       } else {
-        queue.unshift(...mixQueue);
+        const allowed = Math.max(0, MAX_QUEUE - queue.length);
+        queue.unshift(...mixQueue.slice(0, allowed));
       }
 
       console.log(`[Mix] ${mixQueue.length} canciones añadidas al frente de la cola`);
@@ -1515,19 +1925,20 @@ app.post('/api/play-with-mix', async (req, res) => {
             || entry.url
             || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : null);
           if (entryUrl) {
-            restQueue.push({ url: entryUrl, title: entry.title || `Canción ${i}`, addedAt: Date.now() });
+            restQueue.push({ url: entryUrl, title: entry.title || `Canción ${i}`, duration: entry.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null });
           }
         }
-        queue.unshift(...restQueue);
+        const allowed = Math.max(0, MAX_QUEUE - queue.length);
+        queue.unshift(...restQueue.slice(0, allowed));
 
-        await playWithMPV(firstUrl, savedAudioDevice, firstTitle);
+        await playWithMPV(firstUrl, savedAudioDevice, firstTitle, req.user?.username || null, req.user?.locationLabel || null);
         res.json({
           success: true,
           message: `Reproduciendo "${firstTitle}" + ${restQueue.length} canciones en cola`,
           mixSize: mixEntries.length
         });
       } else {
-        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title);
+        await playWithMPV(basePlayUrl, savedAudioDevice, baseInfo.title, req.user?.username || null, req.user?.locationLabel || null);
         res.json({
           success: true,
           message: `Reproduciendo "${baseInfo.title}" (no se encontró mix relacionado)`,
@@ -1820,6 +2231,10 @@ app.post('/api/queue', async (req, res) => {
     return res.status(400).json({ error: 'URL requerida' });
   }
 
+  if (queue.length >= MAX_QUEUE) {
+    return res.status(429).json({ error: `Cola llena (máximo ${MAX_QUEUE} canciones)` });
+  }
+
   try {
     console.log('[Queue Add] Obteniendo info del video...');
     const { info, playUrl } = await resolveTrackInfo(url);
@@ -1827,11 +2242,14 @@ app.post('/api/queue', async (req, res) => {
     if (info.entries && info.entries.length > 1) {
       // Es una playlist (solo YouTube)
       info.entries.forEach(entry => {
-        if (entry && entry.url) {
+        if (entry && entry.url && queue.length < MAX_QUEUE) {
           queue.push({
             url: entry.url,
             title: entry.title || 'Desconocido',
-            addedAt: Date.now()
+            duration: entry.duration || 0,
+            addedAt: Date.now(),
+            addedBy: req.user?.username || null,
+            addedLocation: req.user?.locationLabel || null
           });
         }
       });
@@ -1846,7 +2264,10 @@ app.post('/api/queue', async (req, res) => {
       queue.push({
         url: playUrl,
         title: info?.title || 'Desconocido',
-        addedAt: Date.now()
+        duration: info?.duration || 0,
+        addedAt: Date.now(),
+        addedBy: req.user?.username || null,
+        addedLocation: req.user?.locationLabel || null
       });
       broadcastStatus();
       res.json({
