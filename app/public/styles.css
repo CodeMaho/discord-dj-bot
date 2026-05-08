@@ -1553,7 +1553,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     justify-content: center;
     gap: 16px;
     padding: 8px 0 6px;
-    min-height: 120px;
+    min-height: 130px; /* must be >= dj-tags(~25px) + gap + default spotlight(90px) */
 }
 
 .poster {
@@ -2110,6 +2110,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     .fan-name { font-size: 8px; }
     .dj-avatar { width: 110px; height: 110px; }
     .poster    { width: 100px; height: 122px; }
+    .dj-row    { min-height: 165px; }
     .tbtn { width: 58px; height: 58px; font-size: 20px; }
     .qp-tab  { font-size: 8px; }
     .qp-label { font-size: 7px; }
@@ -2400,7 +2401,8 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     .logo-chip h1  { font-size: 7px; }
     .user-chip-area { top: 8px; right: 8px; }
     .dj-spotlight   { width: 70px !important; height: 70px !important; }
-    .dj-turntable   { width: 90px !important; margin-top: -24px !important; }
+    .dj-turntable   { width: 90px !important; }
+    .dj-row         { min-height: 105px; } /* 25px tags + 10px gap + 70px spotlight */
 }
 
 /* ── DJ Spotlight ───────────────────────────────────── */
@@ -2410,17 +2412,33 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     filter: drop-shadow(0 0 12px rgba(255,215,0,0.7)) drop-shadow(0 4px 10px rgba(0,0,0,.6));
     animation: djBob 2.4s ease-in-out infinite;
     object-fit: contain;
-    position: relative;
-    z-index: 1;
 }
 
 .dj-turntable {
     width: 120px;
     image-rendering: pixelated;
     filter: drop-shadow(0 2px 6px rgba(0,0,0,.7));
-    position: relative;
+}
+
+/* Spotlight active: stretch row + anchor sticker/turntable at the floor */
+.dj-stage-center.has-spotlight {
+    align-self: stretch;
+}
+
+.dj-stage-center.has-spotlight #dj-spotlight-img {
+    position: absolute;
+    bottom: 0;
+    left: 0; right: 0;
+    margin: 0 auto;
+    z-index: 1;
+}
+
+.dj-stage-center.has-spotlight #dj-turntable-img {
+    position: absolute;
+    bottom: 0;
+    left: 0; right: 0;
+    margin: 0 auto;
     z-index: 2;
-    margin-top: -32px; /* overlap bottom third of the spotlight sticker */
 }
 
 /* ── Compass flag image ─────────────────────────────── */
@@ -2440,10 +2458,12 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
 
 @media (min-width: 1200px) {
     .dj-spotlight { width: 130px; height: 130px; }
-    .dj-turntable { width: 150px; margin-top: -44px; }
+    .dj-turntable { width: 150px; }
+    .dj-row       { min-height: 165px; } /* 25px tags + 10px gap + 130px sticker */
 }
 
 @media (min-width: 900px) and (max-width: 1199px) {
     .dj-spotlight { width: 110px; height: 110px; }
-    .dj-turntable { width: 130px; margin-top: -38px; }
+    .dj-turntable { width: 130px; }
+    .dj-row       { min-height: 150px; }
 }

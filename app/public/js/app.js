@@ -1247,6 +1247,8 @@ function updateNowPlaying(song) {
     const decks       = document.querySelector('.decks');
     const isActive    = song.status === 'playing' || song.status === 'paused';
 
+    const stageCenter = document.querySelector('.dj-stage-center');
+
     if (djSpotlight && djTurntable && djAvatar) {
         if (isActive && song.addedByGif) {
             const gifSrc = song.addedByGif.startsWith('/') ? `${getBackendUrl()}${song.addedByGif}` : song.addedByGif;
@@ -1255,11 +1257,13 @@ function updateNowPlaying(song) {
             djTurntable.style.display = '';
             djAvatar.style.display    = 'none';
             if (decks) decks.style.display = 'none';
+            if (stageCenter) stageCenter.classList.add('has-spotlight');
         } else {
             djSpotlight.style.display = 'none';
             djTurntable.style.display = 'none';
             djAvatar.style.display    = '';
             if (decks) decks.style.display = '';
+            if (stageCenter) stageCenter.classList.remove('has-spotlight');
         }
     }
 
