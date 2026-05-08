@@ -295,7 +295,7 @@ const StickersSystem = (() => {
             sendToServer({ type: 'grab', id });
         });
 
-        els[id] = { img, nameEl, wrapper };
+        els[id] = { img, nameEl, wrapper, _pauseCanvas: null };
         return els[id];
     }
 
@@ -349,7 +349,8 @@ const StickersSystem = (() => {
     const MAX_LIVES  = 5;
 
     function applyToDOM(s, cx, cy) {
-        const { img, nameEl, wrapper } = getOrCreate(s.id, s.gifUrl);
+        const entry = getOrCreate(s.id, s.gifUrl);
+        const { img, nameEl, wrapper } = entry;
         const W         = window.innerWidth;
         const H         = window.innerHeight;
         const scaleX    = W / STICKER_VW;
@@ -371,6 +372,13 @@ const StickersSystem = (() => {
         // Nombre del usuario encima del GIF
         nameEl.textContent  = s.username || '';
         nameEl.style.width  = pxSize + 'px';
+
+        // Sincronizar tamaño del canvas de pausa si existe
+        if (entry._pauseCanvas) {
+            entry._pauseCanvas.style.width  = pxSize + 'px';
+            entry._pauseCanvas.style.height = pxSize + 'px';
+            entry._pauseCanvas.style.cursor = img.style.cursor;
+        }
     }
 
     function startRenderLoop() {
@@ -496,7 +504,46 @@ const StickersSystem = (() => {
         });
     }
 
-    function setPlaying() {}
+    let _playing = false;
+
+    function _freezeGif(entry) {
+        const { img } = entry;
+        if (entry._pauseCanvas || !img.complete || !img.naturalWidth) return;
+        try {
+            const w = parseInt(img.style.width)  || img.naturalWidth;
+            const h = parseInt(img.style.height) || img.naturalHeight;
+            const canvas = document.createElement('canvas');
+            canvas.width  = w;
+            canvas.height = h;
+            canvas.style.width        = img.style.width;
+            canvas.style.height       = img.style.height;
+            canvas.style.cursor       = img.style.cursor;
+            canvas.style.pointerEvents = img.style.pointerEvents;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            img.insertAdjacentElement('afterend', canvas);
+            img.style.display = 'none';
+            entry._pauseCanvas = canvas;
+        } catch (_) {}
+    }
+
+    function _resumeGif(entry, s) {
+        if (!entry._pauseCanvas) return;
+        entry._pauseCanvas.remove();
+        entry._pauseCanvas = null;
+        entry.img.style.display = '';
+        const src = s.gifUrl.startsWith('/') ? `${getBackendUrl()}${s.gifUrl}` : s.gifUrl;
+        entry.img.src = src;
+    }
+
+    function setPlaying(val) {
+        _playing = val;
+        Object.entries(stickersData).forEach(([strId, s]) => {
+            if (!s.permanent) return;
+            const entry = els[Number(strId)];
+            if (!entry) return;
+            val ? _resumeGif(entry, s) : _freezeGif(entry);
+        });
+    }
 
     return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();

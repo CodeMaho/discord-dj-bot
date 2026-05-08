@@ -972,7 +972,7 @@ const StickerServer = (() => {
     } catch (_) { gifUrls = []; }
   }
 
-  function makeSticker(url, username) {
+  function makeSticker(url, username, permanent = false) {
     const angle = rnd(0, Math.PI * 2);
     return {
       id:               nextId++,
@@ -988,6 +988,7 @@ const StickerServer = (() => {
       invincibleUntil:  0,
       pulse:            0,
       grabbedBy:        null,
+      permanent,
     };
   }
 
@@ -1012,6 +1013,7 @@ const StickerServer = (() => {
       maxLives:   MAX_LIVES,
       grabbed:    s.grabbedBy !== null,
       invincible: now < s.invincibleUntil,
+      permanent:  s.permanent || false,
     };
   }
 
@@ -1053,8 +1055,8 @@ const StickerServer = (() => {
         const minD = (a.size + b.size) / 2;
 
         if (dist < minD) {
-          a.lives = Math.max(0, a.lives - 1);
-          b.lives = Math.max(0, b.lives - 1);
+          if (!a.permanent) a.lives = Math.max(0, a.lives - 1);
+          if (!b.permanent) b.lives = Math.max(0, b.lives - 1);
           a.invincibleUntil = now + INVINCIBLE_MS;
           b.invincibleUntil = now + INVINCIBLE_MS;
           a.pulse = 1.8; b.pulse = 1.8;
@@ -1082,7 +1084,7 @@ const StickerServer = (() => {
 
     // Eliminar muertos y sincronizar el mapa userId→stickerId
     const countBefore = stickers.length;
-    stickers = stickers.filter(s => s.lives > 0);
+    stickers = stickers.filter(s => s.permanent || s.lives > 0);
     if (stickers.length < countBefore) {
       const aliveIds = new Set(stickers.map(s => s.id));
       for (const [uid, sid] of userStickers.entries()) {
@@ -1203,8 +1205,9 @@ const StickerServer = (() => {
   }
 
   function revive() {
-    nextId = 0;
-    stickers = [];
+    const permanents = stickers.filter(s => s.permanent);
+    nextId = permanents.length ? Math.max(...permanents.map(s => s.id)) + 1 : 0;
+    stickers = [...permanents];
     userStickers.clear();
     // Recrear un sticker por cada usuario autenticado conectado
     wss.clients.forEach(client => {
@@ -1213,7 +1216,7 @@ const StickerServer = (() => {
       }
     });
     broadcastState();
-    console.log(`[StickerServer] Revividos: ${stickers.length} stickers`);
+    console.log(`[StickerServer] Revividos: ${stickers.length} stickers (${permanents.length} permanentes)`);
   }
 
   function assignClientId(ws) {
@@ -1227,9 +1230,11 @@ const StickerServer = (() => {
   function init() {
     loadGifs();
     if (!gifUrls.length) { console.warn('[StickerServer] Sin GIFs'); return; }
-    stickers = [];   // sin usuarios → sin stickers
+    stickers = [];
+    const zoro = makeSticker('/stickers/zorotwerk.gif', '', true);
+    stickers.push(zoro);
     intervalId = setInterval(tick, TICK_MS);
-    console.log('[StickerServer] Iniciado (esperando usuarios)');
+    console.log('[StickerServer] Iniciado con sticker permanente zorotwerk');
   }
 
   return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker };
