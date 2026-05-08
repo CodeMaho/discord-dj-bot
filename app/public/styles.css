@@ -1807,7 +1807,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
 /* ── Crowd ──────────────────────────────────────── */
 .crowd {
     position: absolute; left: 0; right: 0;
-    bottom: calc(32% + 6px);   /* just above the sand line */
+    bottom: calc(32% + 50px);  /* above sand + enough clearance from console */
     display: flex;
     justify-content: center;
     align-items: flex-end;
@@ -2383,7 +2383,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
 @media (max-height: 700px) {
     .booth    { top: 2%; }
     .sand     { height: 26%; }
-    .crowd    { bottom: calc(26% + 6px); }
+    .crowd    { bottom: calc(26% + 40px); }
     .console  { height: 200px; bottom: 6px; }
     .console-body { top: 28px; }
     .bulbs    { top: 16px; }
@@ -2400,7 +2400,7 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     .logo-chip h1  { font-size: 7px; }
     .user-chip-area { top: 8px; right: 8px; }
     .dj-spotlight   { width: 70px !important; height: 70px !important; }
-    .dj-turntable   { width: 90px !important; }
+    .dj-turntable   { width: 90px !important; margin-top: -24px !important; }
 }
 
 /* ── DJ Spotlight ───────────────────────────────────── */
@@ -2410,13 +2410,17 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     filter: drop-shadow(0 0 12px rgba(255,215,0,0.7)) drop-shadow(0 4px 10px rgba(0,0,0,.6));
     animation: djBob 2.4s ease-in-out infinite;
     object-fit: contain;
+    position: relative;
+    z-index: 1;
 }
 
 .dj-turntable {
     width: 120px;
     image-rendering: pixelated;
     filter: drop-shadow(0 2px 6px rgba(0,0,0,.7));
-    margin-top: -4px;
+    position: relative;
+    z-index: 2;
+    margin-top: -32px; /* overlap bottom third of the spotlight sticker */
 }
 
 /* ── Compass flag image ─────────────────────────────── */
@@ -2436,10 +2440,10 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
 
 @media (min-width: 1200px) {
     .dj-spotlight { width: 130px; height: 130px; }
-    .dj-turntable { width: 150px; }
+    .dj-turntable { width: 150px; margin-top: -44px; }
 }
 
 @media (min-width: 900px) and (max-width: 1199px) {
     .dj-spotlight { width: 110px; height: 110px; }
-    .dj-turntable { width: 130px; }
+    .dj-turntable { width: 130px; margin-top: -38px; }
 }
