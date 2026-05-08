@@ -158,6 +158,7 @@ const ytDlpWrap = new YTDlpWrap();
 async function getVideoInfoWithArgs(url) {
   const args = [
     '--js-runtimes', 'node',
+    '--no-update',
     '--dump-json',
     '--no-download',
     '--flat-playlist',
@@ -247,6 +248,7 @@ async function getYouTubeMix(videoId) {
   console.log(`[Mix] Obteniendo mix: ${mixUrl}`);
   const args = [
     '--js-runtimes', 'node',
+    '--no-update',
     '--dump-json',
     '--no-download',
     '--flat-playlist',
@@ -339,7 +341,7 @@ async function resolveSpotifyTrack(url) {
 
   // 2. yt-dlp
   try {
-    const args = ['--dump-json', '--no-download', url];
+    const args = ['--dump-json', '--no-download', '--no-update', url];
     const output = await ytDlpWrap.execPromise(args);
     const info = JSON.parse(output.trim().split('\n')[0]);
     if (info?.title) {
@@ -427,7 +429,7 @@ async function resolveSpotifyCollection(url) {
 
   // 2. yt-dlp flat-playlist (fallback)
   try {
-    const args = ['--dump-json', '--no-download', '--flat-playlist', url];
+    const args = ['--dump-json', '--no-download', '--no-update', '--flat-playlist', url];
     const output = await ytDlpWrap.execPromise(args);
     const lines = output.trim().split('\n').filter(l => l.trim());
     if (lines.length > 0) {
@@ -506,6 +508,7 @@ async function searchYouTube(query) {
   console.log(`[YT Search] Buscando: "${query}"`);
   const args = [
     '--js-runtimes', 'node',
+    '--no-update',
     '--dump-json',
     '--no-download',
     '--flat-playlist',
@@ -864,6 +867,7 @@ const BeatAnalyzer = (() => {
     // yt-dlp descarga el audio y ffmpeg lo convierte a PCM en tiempo real.
     ytdlpProc = spawn('yt-dlp', [
       url,
+      '--no-update',
       '-o', '-',
       '-f', 'bestaudio',
       '--no-playlist',
@@ -2542,6 +2546,25 @@ app.get('/api/audio-devices', async (req, res) => {
   res.json({ devices: cachedAudioDevices });
 });
 
+// Auto-actualizar yt-dlp en segundo plano al arrancar
+function autoUpdateYtDlp() {
+  console.log('[yt-dlp] Comprobando actualizaciones...');
+  const proc = spawn('yt-dlp', ['-U'], { stdio: 'pipe' });
+  let out = '';
+  proc.stdout.on('data', d => { out += d.toString(); });
+  proc.stderr.on('data', d => { out += d.toString(); });
+  proc.on('close', code => {
+    const updated = out.includes('Updated') || out.includes('updated');
+    const upToDate = out.includes('up to date') || out.includes('up-to-date') || out.includes('al día');
+    if (updated) console.log('[yt-dlp] ✅ Actualizado a la última versión');
+    else if (upToDate || code === 0) console.log('[yt-dlp] ✅ Ya está actualizado');
+    else console.log('[yt-dlp] ⚠️  No se pudo actualizar automáticamente. Ejecuta manualmente: yt-dlp -U');
+  });
+  proc.on('error', () => {
+    console.log('[yt-dlp] ⚠️  yt-dlp no encontrado en PATH para actualizar');
+  });
+}
+
 // Cargar estado y configuración al iniciar
 loadServerConfig();
 loadState();
@@ -2777,10 +2800,13 @@ server.listen(PORT, '0.0.0.0', async () => {
 ╚════════════════════════════════════════════════════════════╝
   `);
 
-  // 1. Seleccionar CABLE Input automáticamente
+  // 1. Actualizar yt-dlp en segundo plano (no bloquea el arranque)
+  autoUpdateYtDlp();
+
+  // 2. Seleccionar CABLE Input automáticamente
   await selectCableInputDevice();
 
-  // 2. Iniciar cloudflared
+  // 3. Iniciar cloudflared
   console.log('\n[Startup] Iniciando túnel de Cloudflare...');
   const url = await startCloudflared();
 
