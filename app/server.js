@@ -1738,18 +1738,21 @@ app.post('/api/play', async (req, res) => {
       // Es una playlist
       console.log(`[Playlist] Detectada: ${info.entries.length} videos`);
       
-      // Si no hay nada reproduciéndose, reproducir el primero
-      if (currentSong.status !== 'playing') {
+      // Si no hay nada activo (ni playing ni paused), reproducir el primero
+      const isActive = currentSong.status === 'playing' || currentSong.status === 'paused';
+      if (!isActive) {
         const firstVideo = info.entries[0];
-        
+
         // Validar que el primer video tiene propiedades necesarias
         if (!firstVideo || !firstVideo.url) {
-          return res.status(400).json({ 
-            error: 'Primer video de playlist inválido' 
+          return res.status(400).json({
+            error: 'Primer video de playlist inválido'
           });
         }
-        
+
         stopCurrentPlayback(true, true); // skipBroadcast=true, isManualStop=true (evitar auto-play)
+        // Esperar a que taskkill termine antes de lanzar nuevo MPV
+        await new Promise(resolve => setTimeout(resolve, 450));
 
         // Insertar el resto al FRENTE de la cola (antes de lo que ya había)
         const restEntries = [];
@@ -1767,8 +1770,7 @@ app.post('/api/play', async (req, res) => {
           }
         }
         queue.unshift(...restEntries);
-        
-        // Reproducir el primero (sin setTimeout)
+
         try {
           await playWithMPV(
             firstVideo.url,
@@ -1777,23 +1779,21 @@ app.post('/api/play', async (req, res) => {
             req.user?.username || null,
             req.user?.locationLabel || null
           );
-          
-          // Respuesta de éxito SOLO si llegó aquí
-          res.json({ 
-            success: true, 
+
+          res.json({
+            success: true,
             message: `Playlist agregada: ${info.entries.length} canciones`,
             queue: queue.length
           });
         } catch (error) {
           console.error('[Playlist Error] Error reproduciendo primer video:', error.message);
-          // Respuesta de error
-          res.status(500).json({ 
-            error: 'Error al reproducir primer video', 
+          res.status(500).json({
+            error: 'Error al reproducir primer video',
             details: error.message
           });
         }
       } else {
-        // Hay algo sonando: insertar toda la playlist al frente de la cola sin interrumpir
+        // Hay algo activo (playing o paused): insertar toda la playlist al frente sin interrumpir
         const newEntries = info.entries
           .filter(e => e && e.url)
           .map(e => ({ url: e.url, title: e.title || 'Desconocido', duration: e.duration || 0, addedAt: Date.now(), addedBy: req.user?.username || null, addedLocation: req.user?.locationLabel || null }));
@@ -1809,9 +1809,10 @@ app.post('/api/play', async (req, res) => {
     } else {
       // Es un solo video
       const videoTitle = info?.title || 'Desconocido';
-      
-      if (currentSong.status === 'playing') {
-        // Hay algo sonando: insertar al principio de la cola (siguiente canción)
+      const isActive = currentSong.status === 'playing' || currentSong.status === 'paused';
+
+      if (isActive) {
+        // Hay algo activo (playing o paused): encolar sin interrumpir
         queue.unshift({
           url: playUrl,
           title: videoTitle,
@@ -1828,8 +1829,10 @@ app.post('/api/play', async (req, res) => {
           queue: queue.length
         });
       } else {
-        // No hay nada sonando: reproducir inmediatamente
+        // No hay nada activo: reproducir inmediatamente
         stopCurrentPlayback(true, true);
+        // Esperar a que taskkill termine antes de lanzar nuevo MPV
+        await new Promise(resolve => setTimeout(resolve, 450));
 
         try {
           console.log(`[Play] Reproduciendo: ${videoTitle}`);
@@ -2423,7 +2426,7 @@ app.post('/api/queue/reorder', (req, res) => {
 });
 
 // POST: Reproducir canción de la cola directamente (la extrae y la reproduce inmediatamente)
-app.post('/api/queue/:index/play', (req, res) => {
+app.post('/api/queue/:index/play', async (req, res) => {
   const index = parseInt(req.params.index);
 
   if (isNaN(index) || index < 0 || index >= queue.length) {
@@ -2434,12 +2437,14 @@ app.post('/api/queue/:index/play', (req, res) => {
   stopCurrentPlayback(true, true);
   broadcastStatus();
 
-  // Iniciar sin bloquear la respuesta HTTP
+  // Responder al cliente inmediatamente (sin bloquear)
+  res.json({ success: true, message: `Reproduciendo: ${song.title}` });
+
+  // Esperar a que taskkill termine antes de lanzar nuevo MPV
+  await new Promise(resolve => setTimeout(resolve, 450));
   playWithMPV(song.url, savedAudioDevice, song.title).catch(err => {
     console.error('[Queue Play] Error:', err.message);
   });
-
-  res.json({ success: true, message: `Reproduciendo: ${song.title}` });
 });
 
 app.delete('/api/queue/:index', (req, res) => {

@@ -1734,8 +1734,14 @@ async function createPlaylist() {
 }
 
 async function stopMedia() {
-    if (currentStatus?.status === 'playing') {
-        return pauseResumeMedia();
+    const status = currentStatus?.status;
+    if (status === 'playing' || status === 'paused') {
+        if (elements.stopBtn) elements.stopBtn.disabled = true;
+        try {
+            await pauseResumeMedia();
+        } finally {
+            if (elements.stopBtn) elements.stopBtn.disabled = false;
+        }
     }
 }
 

@@ -382,17 +382,6 @@ document.querySelectorAll('.qp-tab').forEach(t => {
     initKnob(knobClip,  slClip,  valClip,  200);
 })();
 
-/* ── urlInput: Enter key triggers playBtn ── */
-const urlIn = document.getElementById('urlInput');
-if (urlIn) {
-    urlIn.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            document.getElementById('playBtn').click();
-        }
-    });
-}
-
 /* ── Queue remove items: slide-out ── */
 document.getElementById('queueContainer').addEventListener('click', e => {
     const x = e.target.closest('.q-row .x');
