@@ -11,288 +11,404 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <img src="assets/brokIcon.jpg" alt="Brook" class="logo-img">
-                <h1>DJ BROOK</h1>
-            </div>
-            <div class="header-right">
-                <div class="status-badge" id="connectionStatus">
-                    <span class="status-dot"></span>
-                    <span class="status-text">Conectando...</span>
-                </div>
-                <div class="user-info" id="user-info" style="display:none">
-                    <span id="user-display"></span>
-                    <button class="btn-logout" id="logoutBtn" title="Cerrar sesión">🚪</button>
-                </div>
-                <button class="btn-revive" id="reviveBtn" title="Revivir stickers">☠️</button>
-                <button class="btn-settings" id="settingsToggle" title="Configurar servidor">⚙️</button>
-            </div>
-        </header>
 
-        <!-- Panel de Configuración del Backend -->
-        <div class="settings-panel hidden" id="settingsPanel">
-            <div class="card">
-                <h3>⚙ CONFIG SERVIDOR</h3>
-                <div class="settings-info">
-                    <span class="label">Servidor actual:</span>
-                    <code id="currentBackendUrl">-</code>
-                </div>
-                <div class="input-group">
-                    <label for="backendUrlInput">URL DEL BACKEND</label>
-                    <input
-                        type="text"
-                        id="backendUrlInput"
-                        placeholder="https://tu-tunel.trycloudflare.com"
-                    >
-                    <div class="input-hint">
-                        Deja vacío para usar el servidor local
-                    </div>
-                </div>
-                <div class="button-group-small">
-                    <button class="btn btn-primary" id="saveBackendBtn">
-                        💾 Guardar
-                    </button>
-                    <button class="btn btn-secondary" id="resetBackendBtn">
-                        🔄 Usar Local
-                    </button>
-                </div>
-            </div>
-        </div>
+<div class="scene">
 
-        <!-- Main Content — 2 column layout -->
-        <main class="main-content">
-
-            <!-- LEFT: Now Playing + Controls -->
-            <div class="main-col">
-
-                <!-- Current Song Display -->
-                <div class="now-playing">
-                    <div class="now-playing-icon">🎧</div>
-                    <div class="now-playing-info">
-                        <div class="label">▶ NOW PLAYING</div>
-                        <div class="song-title" id="currentSong">NINGUNA CANCION</div>
-                        <div class="now-playing-meta">
-                            <div class="song-status" id="songStatus">
-                                <span class="status-indicator stopped"></span>
-                                <span id="statusText">Detenido</span>
-                            </div>
-                            <div class="now-playing-user" id="nowPlayingUser" style="display:none"></div>
-                        </div>
-                        <!-- Progress Bar -->
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progressFill"></div>
-                            </div>
-                            <div class="progress-time">
-                                <span id="currentTime">0:00</span>
-                                <span id="totalTime">0:00</span>
-                            </div>
-                        </div>
-                        <!-- Waveform -->
-                        <canvas id="waveformCanvas" class="waveform-canvas"></canvas>
-                    </div>
-                    <button class="btn-pause-resume" id="pauseResumeBtn" title="Pausar / Reanudar" style="display:none">
-                        ⏸
-                    </button>
-                </div>
-
-                <!-- Controls Card -->
-                <div class="card" id="controls-card">
-                    <h2>🎮 CONTROLES</h2>
-                    <div class="input-group">
-                        <label for="urlInput">CANCION / ARTISTA / URL</label>
-                        <div class="input-with-button">
-                            <input
-                                type="text"
-                                id="urlInput"
-                                placeholder="Bohemian Rhapsody, URL de YouTube, Suno..."
-                                autocomplete="off"
-                            >
-                            <button class="btn btn-icon" id="clearBtn" title="Limpiar">✕</button>
-                        </div>
-                        <div class="input-hint">YouTube · Spotify · Suno · búsqueda por texto</div>
-                    </div>
-                    <div class="button-group">
-                        <button class="btn btn-primary" id="playBtn">
-                            <span class="btn-icon">▶</span>
-                            PLAY
-                        </button>
-                        <button class="btn btn-secondary" id="addQueueBtn">
-                            <span class="btn-icon">+</span>
-                            QUEUE
-                        </button>
-                        <button class="btn btn-accent" id="createPlaylistBtn">
-                            <span class="btn-icon">🎲</span>
-                            PLAYLIST
-                        </button>
-                        <button class="btn btn-danger" id="stopBtn">
-                            <span class="btn-icon">■</span>
-                            STOP
-                        </button>
-                    </div>
-                </div>
-
-            </div><!-- /main-col -->
-
-            <!-- RIGHT: Sidebar -->
-            <div class="sidebar-col">
-
-                <!-- Queue Card -->
-                <div class="card" id="queue-card">
-                    <div class="queue-header">
-                        <h2>📜 QUEUE</h2>
-                        <span class="queue-count" id="queueCount">0</span>
-                    </div>
-                    <div class="queue-container" id="queueContainer">
-                        <div class="empty-queue">
-                            <span class="empty-icon">📭</span>
-                            <p>Cola vacía</p>
-                            <small>Agrega canciones o playlists</small>
-                        </div>
-                    </div>
-                    <div class="queue-actions">
-                        <button class="btn btn-secondary" id="skipBtn" disabled>
-                            <span class="btn-icon">⏭</span>
-                            SKIP
-                        </button>
-                        <button class="btn btn-danger" id="clearQueueBtn" disabled>
-                            <span class="btn-icon">🗑</span>
-                            CLEAR
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Radio Clip Card -->
-                <div class="card" id="clip-card">
-                    <h2>🎙 RADIO CLIP</h2>
-                    <div class="input-group">
-                        <label for="clipInput">URL O CANCION DEL CLIP</label>
-                        <div class="input-with-button">
-                            <input
-                                type="text"
-                                id="clipInput"
-                                placeholder="URL o nombre (máx. 20 seg)"
-                                autocomplete="off"
-                            >
-                        </div>
-                    </div>
-                    <div class="input-group" style="margin-top:6px;">
-                        <label>O ADJUNTA ARCHIVO DE AUDIO</label>
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
-                            <label class="btn btn-secondary" style="cursor:pointer; display:inline-flex; align-items:center; gap:6px; margin:0; padding:8px 14px;">
-                                <span>📎</span>
-                                <span id="clipFileLabel">Adjuntar archivo</span>
-                                <input type="file" id="clipFileInput" accept="audio/*,video/*" style="display:none">
-                            </label>
-                            <button class="btn btn-secondary" id="clipFileClearBtn" title="Quitar archivo" style="display:none; padding:6px 10px;">✕</button>
-                        </div>
-                        <div class="input-hint">MP3 · WAV · OGG · FLAC</div>
-                    </div>
-                    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="min-width:140px; font-size:0.78em; color:var(--text-muted);">♪ MUSICA CLIP</span>
-                            <input type="range" id="clipMusicVolumeSlider" min="0" max="100" value="40" style="flex:1; cursor:pointer; accent-color:var(--primary);">
-                            <span id="clipMusicVolumeValue" style="min-width:38px; text-align:right; font-size:0.78em; font-weight:600;">40%</span>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="min-width:140px; font-size:0.78em; color:var(--text-muted);">🎙 VOL CLIP</span>
-                            <input type="range" id="clipVolumeSlider" min="0" max="200" value="100" style="flex:1; cursor:pointer; accent-color:var(--pink);">
-                            <span id="clipVolumeValue" style="min-width:38px; text-align:right; font-size:0.78em; font-weight:600;">100%</span>
-                        </div>
-                    </div>
-                    <div class="button-group" style="margin-top:14px;">
-                        <button class="btn btn-accent" id="clipBtn">
-                            <span class="btn-icon">🎙</span>
-                            CLIP
-                        </button>
-                        <button class="btn btn-secondary" id="clipStopBtn" style="display:none">
-                            <span class="btn-icon">■</span>
-                            STOP CLIP
-                        </button>
-                    </div>
-                    <div id="clipStatus" style="display:none; margin-top:12px; padding:8px 12px; background:rgba(255,140,0,0.12); border-left:3px solid var(--orange); border-radius:2px; font-size:0.78em; color:var(--orange);">
-                        ▶▶ <span id="clipStatusText">Clip sonando...</span>
-                    </div>
-                </div>
-
-                <!-- Quick Links -->
-                <div class="card quick-links">
-                    <h3>🔗 LINKS</h3>
-                    <div class="link-grid">
-                        <a href="https://www.youtube.com" target="_blank" class="quick-link">
-                            <span class="link-icon">📺</span>
-                            YouTube
-                        </a>
-                        <a href="https://music.youtube.com" target="_blank" class="quick-link">
-                            <span class="link-icon">🎵</span>
-                            YT Music
-                        </a>
-                        <a href="https://discord.com" target="_blank" class="quick-link">
-                            <span class="link-icon">💬</span>
-                            Discord
-                        </a>
-                    </div>
-                </div>
-
-            </div><!-- /sidebar-col -->
-        </main>
+  <!-- ── LEFT: Queue / Search / Clip panel ──────── -->
+  <aside class="queue-panel">
+    <div class="qp-tabs">
+      <button class="qp-tab active" data-tab="queue">QUEUE <span class="badge" id="queueCount">0</span></button>
+      <button class="qp-tab" data-tab="clip">CLIP</button>
+      <button class="qp-tab" data-tab="history">HISTORIAL</button>
     </div>
 
-    <!-- Notification Container -->
-    <div id="notifications"></div>
-
-    <!-- Auth Overlay -->
-    <div id="auth-overlay">
-        <div class="auth-card">
-            <div class="auth-logo">
-                <img src="assets/brokIcon.jpg" alt="Brook" class="auth-brook-icon">
-                <h2>DISCORD<br>DJ BROOK</h2>
-                <p class="auth-subtitle">CONTROLADOR MUSICAL v2.0</p>
-            </div>
-
-            <div class="auth-tabs">
-                <button class="auth-tab active" id="auth-tab-login">&gt; LOGIN</button>
-                <button class="auth-tab" id="auth-tab-register">REGISTER</button>
-            </div>
-
-            <!-- Login -->
-            <div id="auth-login-form">
-                <div class="input-group">
-                    <label for="auth-username">USUARIO</label>
-                    <input type="text" id="auth-username" placeholder="tu_nombre_de_usuario" autocomplete="username">
-                </div>
-                <div class="input-group">
-                    <label for="auth-password">CONTRASEÑA</label>
-                    <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
-                </div>
-                <div id="auth-login-error" class="auth-error" style="display:none"></div>
-                <button class="btn btn-primary auth-submit" id="auth-login-btn">▶ INICIAR SESION</button>
-            </div>
-
-            <!-- Registro -->
-            <div id="auth-register-form" style="display:none">
-                <div class="input-group">
-                    <label for="reg-username">USUARIO</label>
-                    <input type="text" id="reg-username" placeholder="elige_un_nombre" autocomplete="username">
-                </div>
-                <div class="input-group">
-                    <label for="reg-password">CONTRASEÑA</label>
-                    <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
-                </div>
-                <div id="auth-register-error" class="auth-error" style="display:none"></div>
-                <button class="btn btn-primary auth-submit" id="auth-register-btn">+ REGISTRARSE</button>
-            </div>
-
+    <!-- QUEUE PANE -->
+    <div class="qp-pane" data-pane="queue">
+      <div class="qp-header">COLA DE REPRODUCCIÓN</div>
+      <div class="qp-list queue-container" id="queueContainer">
+        <div class="qp-empty">
+          <div class="ic">📭</div>
+          <h3>COLA VACÍA</h3>
+          <p>Escribe una URL en el reproductor para añadir canciones</p>
         </div>
-        <!-- Scan line animation -->
-        <div class="auth-scanline"></div>
+      </div>
+      <div class="qp-footer">
+        <button class="qp-foot-btn">⟲ LOOP</button>
+        <button class="qp-foot-btn">⇄ SHUFFLE</button>
+        <button class="qp-foot-btn qp-foot-danger" id="clearQueueBtn" disabled>🗑 CLEAR</button>
+      </div>
     </div>
 
-    <script src="js/config.js"></script>
-    <script src="js/auth.js"></script>
-    <script src="js/app.js"></script>
+    <!-- CLIP PANE -->
+    <div class="qp-pane" data-pane="clip" hidden>
+      <div class="qp-header">🎙 RADIO CLIP</div>
+      <div class="qp-add-body">
+        <label class="qp-label">URL O CANCIÓN DEL CLIP</label>
+        <div class="qp-input">
+          <input id="clipInput" type="text" placeholder="URL o nombre (máx. 20 seg)" autocomplete="off">
+        </div>
+        <label class="qp-label" style="margin-top:10px;">O ADJUNTAR ARCHIVO</label>
+        <div style="display:flex; align-items:center; gap:8px; margin:4px 0 10px;">
+          <label class="qp-src" style="cursor:pointer; flex:1; display:inline-flex; align-items:center; gap:6px; justify-content:center; margin:0; padding:10px 6px;">
+            <span>📎</span><span id="clipFileLabel">Adjuntar archivo</span>
+            <input type="file" id="clipFileInput" accept="audio/*,video/*" style="display:none">
+          </label>
+          <button class="qp-src" id="clipFileClearBtn" style="display:none; flex:0 0 auto;">✕</button>
+        </div>
+        <div class="qp-hint">MP3 · WAV · OGG · FLAC</div>
+        <div class="qp-vol-row">
+          <span class="qp-vol-label">♪ MÚSICA</span>
+          <input type="range" id="clipMusicVolumeSlider" min="0" max="100" value="40" class="qp-slider">
+          <span id="clipMusicVolumeValue" class="qp-vol-val">40%</span>
+        </div>
+        <div class="qp-vol-row">
+          <span class="qp-vol-label">🎙 CLIP</span>
+          <input type="range" id="clipVolumeSlider" min="0" max="200" value="100" class="qp-slider">
+          <span id="clipVolumeValue" class="qp-vol-val">100%</span>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <button class="qp-add-btn" id="clipBtn" style="flex:1;">🎙 PLAY CLIP</button>
+          <button class="qp-src" id="clipStopBtn" style="display:none; flex:0 0 auto; padding:14px 12px;">■ STOP</button>
+        </div>
+        <div id="clipStatus" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(255,140,0,0.12); border-left:3px solid var(--orange); font-family:var(--pix); font-size:7px; color:var(--orange); letter-spacing:1px;">
+          ▶▶ <span id="clipStatusText">Clip sonando...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- HISTORY PANE -->
+    <div class="qp-pane" data-pane="history" hidden>
+      <div class="qp-header">RECENTLY PLAYED</div>
+      <div class="qp-list">
+        <div class="qp-empty">
+          <div class="ic">📜</div>
+          <h3>SIN HISTORIAL</h3>
+          <p>Las canciones reproducidas aparecerán aquí</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+
+  <!-- ── RIGHT: Beach scene ─────────────────────── -->
+  <section class="stage-wrap">
+
+    <!-- Logo chip top-left -->
+    <div class="logo-chip">
+      <img src="assets/brokIcon.jpg" alt="Brook">
+      <h1>DJ BROOK</h1>
+    </div>
+
+    <!-- Status + user chip top-right -->
+    <div class="user-chip-area">
+      <div class="status-badge" id="connectionStatus">
+        <span class="status-dot"></span>
+        <span class="status-text">Conectando...</span>
+      </div>
+      <div class="user-info" id="user-info" style="display:none">
+        <span id="user-display"></span>
+        <button class="btn-logout" id="logoutBtn" title="Cerrar sesión">🚪</button>
+      </div>
+      <button class="btn-revive" id="reviveBtn" title="Revivir stickers">☠️</button>
+      <button class="btn-settings" id="settingsToggle" title="Configurar servidor">⚙️</button>
+    </div>
+
+    <!-- Sand floor -->
+    <div class="sand"></div>
+
+    <!-- Palms -->
+    <div class="palm l">🌴</div>
+    <div class="palm r">🌴</div>
+
+    <!-- DJ booth / stage -->
+    <div class="booth">
+      <div class="flag">🏴‍☠️</div>
+      <div class="flag r">🏴‍☠️</div>
+
+      <!-- Compass-clock above pipes -->
+      <div class="compass">
+        <div class="compass-ring"></div>
+        <div class="compass-core">⚓</div>
+      </div>
+
+      <!-- Pipes bar -->
+      <div class="pipes">
+        <div class="pipes-bolts">
+          <span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <!-- Stage face (turquoise wall) -->
+      <div class="stage-face">
+        <div class="gear lg" style="position:absolute; left:6%; top:14%"></div>
+        <div class="gear sm" style="position:absolute; left:14%; top:50%"></div>
+        <div class="gear"    style="position:absolute; right:6%; top:14%"></div>
+        <div class="gear sm" style="position:absolute; right:14%; top:50%"></div>
+
+        <div class="dj-row">
+          <div class="poster l">
+            <img src="stickers/one-piece-pixel.gif" alt="">
+          </div>
+
+          <div class="dj-stage-center">
+            <div class="dj-tags">
+              <span class="dj-tag" id="dj-username-tag">🔥 DJ BROOK</span>
+              <span class="dj-tag role">
+                <span class="status-indicator stopped"></span>
+                <span id="statusText">STOP</span>
+              </span>
+            </div>
+            <img class="dj-avatar" src="assets/brookLogo.gif" alt="DJ Brook">
+            <div class="decks">
+              <div class="deck"></div>
+              <div class="deck"></div>
+            </div>
+          </div>
+
+          <div class="poster r">
+            <img src="stickers/one-piece-pixel%20(1).gif" alt="">
+          </div>
+        </div>
+
+        <!-- Marquee: LCD now-playing display -->
+        <div class="marquee">
+          <div class="speaker"></div>
+          <div class="lcd now-playing" style="position:relative; overflow:hidden;">
+            <div class="lcd-title-wrap">
+              <span class="lcd-title" id="currentSong">NINGUNA CANCION</span>
+            </div>
+            <div class="lcd-added-by" id="nowPlayingUser" style="display:none;"></div>
+            <div class="lcd-bar progress-bar">
+              <div class="lcd-bar-fill progress-fill" id="progressFill"></div>
+            </div>
+            <div class="lcd-time progress-time">
+              <span id="currentTime">0:00</span>
+              <span id="totalTime">0:00</span>
+            </div>
+            <canvas id="waveformCanvas" class="waveform-canvas" width="400" height="44" style="height:22px; margin-top:4px; opacity:0.55;"></canvas>
+          </div>
+          <div class="speaker"></div>
+        </div>
+
+        <div class="stage-skirt"></div>
+
+        <div class="floor-lights">
+          <div class="fl"></div><div class="fl"></div><div class="fl"></div>
+          <div class="fl"></div><div class="fl"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Crowd: poblada dinámicamente por StickersSystem según usuarios conectados -->
+    <div class="crowd"></div>
+
+    <!-- Foreground physical console / deck -->
+    <div class="console">
+      <div class="console-bg"></div>
+
+      <!-- Left knob: music volume during clips -->
+      <div class="knob l" title="Vol música clip" data-vol="40" id="knob-music">
+        <div class="knob-frame">
+          <span class="knob-tag">MÚSICA</span>
+          <span class="knob-pct">40%</span>
+        </div>
+      </div>
+
+      <!-- Right knob: clip voice volume -->
+      <div class="knob r" title="Vol clip" data-vol="100" id="knob-clip">
+        <div class="knob-frame">
+          <span class="knob-tag">CLIP</span>
+          <span class="knob-pct">100%</span>
+        </div>
+      </div>
+
+      <div class="console-body">
+        <div class="bulbs">
+          <span class="bulb"></span><span class="bulb"></span><span class="bulb"></span>
+          <span class="bulb"></span><span class="bulb"></span><span class="bulb"></span>
+          <span class="bulb"></span><span class="bulb"></span><span class="bulb"></span>
+        </div>
+        <div class="console-form">
+          <div class="console-search">
+            <input id="urlInput" type="text" placeholder="URL YouTube · Spotify · SoundCloud" autocomplete="off">
+            <button class="csrc-btn" id="addQueueBtn" title="Añadir a cola">+ COLA</button>
+            <button class="csrc-btn" id="createPlaylistBtn" title="Crear playlist">📋</button>
+            <button class="csrc-btn danger" id="clearBtn" title="Limpiar campo">✕</button>
+          </div>
+          <div class="transport">
+            <button class="tbtn stop"  id="stopBtn"        title="STOP">
+              <span class="btn-icon">■</span>
+            </button>
+            <button class="tbtn play"  id="playBtn"        title="PLAY">▶</button>
+            <button class="tbtn pause" id="pauseResumeBtn" title="Pausar / Reanudar" style="display:none">⏸</button>
+            <button class="tbtn skip"  id="skipBtn"        title="SKIP" disabled>⏭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scanlines overlay -->
+    <div class="scanlines"></div>
+  </section>
+</div>
+
+
+<!-- Settings Panel (floating overlay) -->
+<div class="settings-panel hidden" id="settingsPanel">
+  <div class="card">
+    <h3>⚙ CONFIG SERVIDOR</h3>
+    <div class="settings-info">
+      <span class="label">Servidor actual:</span>
+      <code id="currentBackendUrl">-</code>
+    </div>
+    <div class="input-group">
+      <label for="backendUrlInput">URL DEL BACKEND</label>
+      <input type="text" id="backendUrlInput" placeholder="https://tu-tunel.trycloudflare.com">
+      <div class="input-hint">Deja vacío para usar el servidor local</div>
+    </div>
+    <div class="button-group-small">
+      <button class="btn btn-primary" id="saveBackendBtn">💾 Guardar</button>
+      <button class="btn btn-secondary" id="resetBackendBtn">🔄 Usar Local</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification Container -->
+<div id="notifications"></div>
+
+<!-- Auth Overlay -->
+<div id="auth-overlay">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <img src="assets/brokIcon.jpg" alt="Brook" class="auth-brook-icon">
+      <h2>DISCORD<br>DJ BROOK</h2>
+      <p class="auth-subtitle">CONTROLADOR MUSICAL v2.0</p>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="auth-tab-login">&gt; LOGIN</button>
+      <button class="auth-tab" id="auth-tab-register">REGISTER</button>
+    </div>
+    <div id="auth-login-form">
+      <div class="input-group">
+        <label for="auth-username">USUARIO</label>
+        <input type="text" id="auth-username" placeholder="tu_nombre_de_usuario" autocomplete="username">
+      </div>
+      <div class="input-group">
+        <label for="auth-password">CONTRASEÑA</label>
+        <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <div id="auth-login-error" class="auth-error" style="display:none"></div>
+      <button class="btn btn-primary auth-submit" id="auth-login-btn">▶ INICIAR SESION</button>
+    </div>
+    <div id="auth-register-form" style="display:none">
+      <div class="input-group">
+        <label for="reg-username">USUARIO</label>
+        <input type="text" id="reg-username" placeholder="elige_un_nombre" autocomplete="username">
+      </div>
+      <div class="input-group">
+        <label for="reg-password">CONTRASEÑA</label>
+        <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+      </div>
+      <div id="auth-register-error" class="auth-error" style="display:none"></div>
+      <button class="btn btn-primary auth-submit" id="auth-register-btn">+ REGISTRARSE</button>
+    </div>
+  </div>
+  <div class="auth-scanline"></div>
+</div>
+
+
+<script>
+/* ── Tab switching ── */
+document.querySelectorAll('.qp-tab').forEach(t => {
+    t.addEventListener('click', () => {
+        const tab = t.dataset.tab;
+        document.querySelectorAll('.qp-tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        document.querySelectorAll('.qp-pane').forEach(p => {
+            p.hidden = p.dataset.pane !== tab;
+        });
+    });
+});
+
+/* ── Knob → slider sync ── */
+(function() {
+    const knobMusic = document.getElementById('knob-music');
+    const knobClip  = document.getElementById('knob-clip');
+    const slMusic   = document.getElementById('clipMusicVolumeSlider');
+    const slClip    = document.getElementById('clipVolumeSlider');
+    const valMusic  = document.getElementById('clipMusicVolumeValue');
+    const valClip   = document.getElementById('clipVolumeValue');
+
+    function initKnob(knob, slider, valEl, maxSlider) {
+        if (!knob || !slider) return;
+        let v = parseInt(knob.dataset.vol, 10) || 50;
+        const pctEl = knob.querySelector('.knob-pct');
+
+        function apply() {
+            v = Math.max(0, Math.min(100, v));
+            knob.dataset.vol = v;
+            if (pctEl) pctEl.textContent = v + '%';
+            const angle = (v / 100) * 270 - 135;
+            knob.style.transform = 'rotate(' + angle + 'deg)';
+            const frame = knob.querySelector('.knob-frame');
+            if (frame) frame.style.transform = 'translateX(-50%) rotate(' + (-angle) + 'deg)';
+            /* update real slider */
+            const slVal = Math.round(v / 100 * maxSlider);
+            slider.value = slVal;
+            if (valEl) valEl.textContent = slVal + '%';
+            slider.dispatchEvent(new Event('input', {bubbles:true}));
+        }
+
+        apply();
+
+        knob.addEventListener('wheel', e => {
+            e.preventDefault();
+            v += e.deltaY < 0 ? 5 : -5;
+            apply();
+        }, {passive: false});
+
+        knob.addEventListener('mousedown', e => {
+            e.preventDefault();
+            const startY = e.clientY, startV = v;
+            const move = ev => { v = startV + Math.round((startY - ev.clientY) / 2); apply(); };
+            const up   = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+    }
+
+    initKnob(knobMusic, slMusic, valMusic, 100);
+    initKnob(knobClip,  slClip,  valClip,  200);
+})();
+
+/* ── urlInput: Enter key triggers playBtn ── */
+const urlIn = document.getElementById('urlInput');
+if (urlIn) {
+    urlIn.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('playBtn').click();
+        }
+    });
+}
+
+/* ── Queue remove items: slide-out ── */
+document.getElementById('queueContainer').addEventListener('click', e => {
+    const x = e.target.closest('.q-row .x');
+    if (!x) return;
+    const row = x.closest('.q-row');
+    if (row) {
+        row.style.transition = 'all .2s';
+        row.style.transform  = 'translateX(-100%)';
+        row.style.opacity    = '0';
+        setTimeout(() => row.remove(), 200);
+    }
+});
+</script>
+
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

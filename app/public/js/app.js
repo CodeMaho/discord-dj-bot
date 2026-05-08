@@ -256,7 +256,8 @@ const STICKER_VW = 1920, STICKER_VH = 1080;  // espacio virtual del servidor
 
 const StickersSystem = (() => {
     let overlay   = null;
-    let els       = {};        // id → { img, nameEl, wrapper }
+    let els       = {};        // id → { img, nameEl, wrapper }  (solo permanentes/flotantes)
+    let crowdFans = {};        // id → { wrap, img, nameEl }     (usuarios no-permanentes en la arena)
     let grabbedId = null;
     const mouseHistory = [];   // {x, y, t} últimos 80ms
 
@@ -297,6 +298,43 @@ const StickersSystem = (() => {
 
         els[id] = { img, nameEl, wrapper, _pauseCanvas: null };
         return els[id];
+    }
+
+    // ── Fans en la arena (stickers no-permanentes) ───────────────────────
+    function getCrowdFan(id, s) {
+        if (crowdFans[id]) return crowdFans[id];
+        const crowdEl = document.querySelector('.crowd');
+        if (!crowdEl) return null;
+
+        const wrap = document.createElement('div');
+        wrap.className = 'fan-wrap';
+        wrap.dataset.fanId = id;
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'fan-name';
+        nameEl.textContent = s.username || '?';
+
+        const img = document.createElement('img');
+        img.className = 'fan';
+        img.src = s.gifUrl.startsWith('/') ? `${getBackendUrl()}${s.gifUrl}` : s.gifUrl;
+        img.alt = s.username || '';
+        img.draggable = false;
+
+        wrap.appendChild(nameEl);
+        wrap.appendChild(img);
+        crowdEl.appendChild(wrap);
+
+        crowdFans[id] = { wrap, img, nameEl };
+        return crowdFans[id];
+    }
+
+    function cleanupCrowdFans(activeIds) {
+        Object.keys(crowdFans).forEach(strId => {
+            if (!activeIds.has(Number(strId))) {
+                crowdFans[strId].wrap.remove();
+                delete crowdFans[strId];
+            }
+        });
     }
 
     // ── Enviar mensaje al servidor via WebSocket ───────────────────────────
@@ -389,23 +427,29 @@ const StickersSystem = (() => {
             const activeIds = new Set();
             Object.values(stickersData).forEach(s => {
                 activeIds.add(s.id);
-                let cx = s.cx, cy = s.cy;
-                if (!s.grabbed) {
-                    // Extrapolación lineal desde el último update del servidor
-                    const dt = Math.min((now - s.serverTime) / 1000, 0.25);
-                    cx = s.cx + (s.vx || 0) * dt;
-                    cy = s.cy + (s.vy || 0) * dt;
-                    // Clamp para no salirse del espacio virtual
-                    const r = s.size / 2;
-                    cx = Math.max(r, Math.min(STICKER_VW - r, cx));
-                    cy = Math.max(r, Math.min(STICKER_VH - r, cy));
+                if (s.permanent) {
+                    // Stickers permanentes (zorotwerk): flotan con física
+                    let cx = s.cx, cy = s.cy;
+                    if (!s.grabbed) {
+                        const dt = Math.min((now - s.serverTime) / 1000, 0.25);
+                        cx = s.cx + (s.vx || 0) * dt;
+                        cy = s.cy + (s.vy || 0) * dt;
+                        const r = s.size / 2;
+                        cx = Math.max(r, Math.min(STICKER_VW - r, cx));
+                        cy = Math.max(r, Math.min(STICKER_VH - r, cy));
+                    }
+                    applyToDOM(s, cx, cy);
+                } else {
+                    // Usuarios normales: aparecen como fans en la arena
+                    getCrowdFan(s.id, s);
                 }
-                applyToDOM(s, cx, cy);
             });
-            // Limpiar stickers eliminados
+            // Limpiar stickers flotantes eliminados
             Object.keys(els).forEach(strId => {
                 if (!activeIds.has(Number(strId))) { els[strId].wrapper.remove(); delete els[strId]; }
             });
+            // Limpiar fans de la arena eliminados
+            cleanupCrowdFans(activeIds);
         }
         renderRafId = requestAnimationFrame(frame);
     }
@@ -418,10 +462,18 @@ const StickersSystem = (() => {
     function render(stickers) {
         if (!overlay) return;
         const activeIds = new Set();
-        stickers.forEach(s => { activeIds.add(s.id); applyToDOM(s, s.cx, s.cy); });
+        stickers.forEach(s => {
+            activeIds.add(s.id);
+            if (s.permanent) {
+                applyToDOM(s, s.cx, s.cy);
+            } else {
+                getCrowdFan(s.id, s);
+            }
+        });
         Object.keys(els).forEach(strId => {
             if (!activeIds.has(Number(strId))) { els[strId].wrapper.remove(); delete els[strId]; }
         });
+        cleanupCrowdFans(activeIds);
     }
 
     // ── Gravedad local (fallback cuando el servidor está desconectado) ────
