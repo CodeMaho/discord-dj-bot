@@ -20,6 +20,7 @@
       <button class="qp-tab active" data-tab="queue">QUEUE <span class="badge" id="queueCount">0</span></button>
       <button class="qp-tab" data-tab="clip">CLIP</button>
       <button class="qp-tab" data-tab="history">HISTORIAL</button>
+      <button class="qp-tab" data-tab="search">🔍</button>
     </div>
 
     <!-- QUEUE PANE -->
@@ -79,11 +80,28 @@
     <!-- HISTORY PANE -->
     <div class="qp-pane" data-pane="history" hidden>
       <div class="qp-header">RECENTLY PLAYED</div>
-      <div class="qp-list">
+      <div class="qp-list" id="historyContainer">
         <div class="qp-empty">
           <div class="ic">📜</div>
           <h3>SIN HISTORIAL</h3>
           <p>Las canciones reproducidas aparecerán aquí</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEARCH PANE -->
+    <div class="qp-pane" data-pane="search" hidden>
+      <div class="qp-header">🔍 BUSCAR EN YOUTUBE</div>
+      <div class="qp-add-body" style="padding:10px 12px;">
+        <div class="yt-search-row">
+          <input id="ytSearchInput" type="text" placeholder="Buscar canción, artista..." autocomplete="off">
+          <button class="hist-btn" id="ytSearchBtn" style="width:36px;height:36px;font-size:15px;">🔍</button>
+        </div>
+        <div id="ytSearchResults" class="yt-results-list">
+          <div class="qp-empty" style="padding:20px 0;">
+            <div class="ic">🎵</div>
+            <p>Escribe algo para buscar</p>
+          </div>
         </div>
       </div>
     </div>
@@ -107,6 +125,7 @@
       </div>
       <div class="user-info" id="user-info" style="display:none">
         <span id="user-display"></span>
+        <button class="btn-sticker" id="stickerPickerBtn" title="Cambiar sticker">🎭</button>
         <button class="btn-logout" id="logoutBtn" title="Cerrar sesión">🚪</button>
       </div>
       <button class="btn-revive" id="reviveBtn" title="Revivir stickers">☠️</button>
@@ -179,6 +198,7 @@
               <span class="lcd-title" id="currentSong">NINGUNA CANCION</span>
             </div>
             <div class="lcd-added-by" id="nowPlayingUser" style="display:none;"></div>
+            <div class="lcd-clip-banner" id="clipLcdBanner" style="display:none;"></div>
             <div class="lcd-bar progress-bar">
               <div class="lcd-bar-fill progress-fill" id="progressFill"></div>
             </div>
@@ -253,6 +273,12 @@
   </section>
 </div>
 
+
+<!-- Sticker Picker Panel -->
+<div class="sticker-picker-panel hidden" id="stickerPickerPanel">
+  <div class="sp-header">🎭 ELIGE TU STICKER</div>
+  <div class="sp-grid" id="stickerPickerGrid"></div>
+</div>
 
 <!-- Settings Panel (floating overlay) -->
 <div class="settings-panel hidden" id="settingsPanel">

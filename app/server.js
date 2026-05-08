@@ -593,6 +593,7 @@ let cachedAudioDevices = []; // Cache de dispositivos de audio
 let currentClipProcess = null;   // Proceso MPV del clip de radio
 let currentClipDuckVolume = 40; // Volumen de ducking activo (para restaurar correctamente)
 let currentClipLocalPath = null; // Ruta del archivo subido activo (se borra al terminar)
+let historyLog = []; // Últimas 25 canciones reproducidas: { title, url, addedBy, addedLocation, playedAt }
 
 // Función para cargar dispositivos de audio (usado al inicio y para refrescar)
 function loadAudioDevices() {
@@ -1024,9 +1025,20 @@ const StickerServer = (() => {
   // Añadir sticker para un usuario que acaba de conectarse
   function spawnForUser(session) {
     if (!gifUrls.length || userStickers.has(session.userId)) return;
-    const s = makeSticker(pick(gifUrls), session.username);
+    const user = users.find(u => u.id === session.userId);
+    const savedGif = user?.stickerGif;
+    const gifUrl = (savedGif && gifUrls.includes(savedGif)) ? savedGif : pick(gifUrls);
+    const s = makeSticker(gifUrl, session.username);
     stickers.push(s);
     userStickers.set(session.userId, s.id);
+  }
+
+  // Actualizar GIF de sticker en tiempo real cuando el usuario cambia su sticker
+  function updateUserSticker(userId, gifUrl) {
+    const stickerId = userStickers.get(userId);
+    if (stickerId === undefined) return;
+    const s = stickers.find(s => s.id === stickerId);
+    if (s) { s.gifUrl = gifUrl; broadcastState(); }
   }
 
   function addUserSticker(session) {
@@ -1237,7 +1249,7 @@ const StickerServer = (() => {
     console.log('[StickerServer] Iniciado con sticker permanente zorotwerk');
   }
 
-  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker };
+  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker, updateUserSticker };
 })();
 
 // Broadcast a todos los clientes conectados
@@ -1465,6 +1477,9 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       currentSong.startedAt = Date.now();
       currentSong.addedBy = addedBy;
       currentSong.addedLocation = addedLocation;
+      // Registrar en historial (solo cuando la canción realmente empieza a sonar)
+      historyLog.unshift({ title: videoTitle, url, addedBy: addedBy || null, addedLocation: addedLocation || null, playedAt: Date.now() });
+      if (historyLog.length > 25) historyLog.pop();
       broadcastStatus();
       BeatAnalyzer.start(url);
       StickerServer.setPlaying(true);
@@ -1668,7 +1683,21 @@ app.post('/api/auth/logout', requireAuth, (req, res) => {
 
 // Info del usuario actual
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json({ username: req.user.username, locationLabel: req.user.locationLabel });
+  const user = users.find(u => u.id === req.user.userId);
+  res.json({ username: req.user.username, locationLabel: req.user.locationLabel, stickerGif: user?.stickerGif || null });
+});
+
+// Actualizar sticker del usuario
+app.patch('/api/auth/sticker', requireAuth, (req, res) => {
+  const { stickerGif } = req.body;
+  if (!stickerGif) return res.status(400).json({ error: 'stickerGif requerido' });
+  const user = users.find(u => u.id === req.user.userId);
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+  user.stickerGif = stickerGif;
+  saveUsers();
+  StickerServer.updateUserSticker(req.user.userId, stickerGif);
+  console.log(`[Auth] Sticker actualizado: ${req.user.username} → ${stickerGif}`);
+  res.json({ success: true, stickerGif });
 });
 
 // Proteger todas las rutas /api/* a partir de aquí
@@ -2462,6 +2491,48 @@ app.delete('/api/queue/:index', (req, res) => {
     message: 'Canción eliminada de la cola',
     removed: removed[0]
   });
+});
+
+// GET: Historial de reproducción (últimas 25 canciones que sonaron de verdad)
+app.get('/api/history', (req, res) => {
+  res.json({ history: historyLog });
+});
+
+// GET: Búsqueda en YouTube (primeros 15 resultados)
+app.get('/api/youtube-search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'Query requerida' });
+  try {
+    const args = [
+      '--js-runtimes', 'node',
+      '--no-update',
+      '--dump-json',
+      '--no-download',
+      '--flat-playlist',
+      `ytsearch15:${q}`
+    ];
+    const output = await ytDlpWrap.execPromise(args);
+    const lines = output.trim().split('\n').filter(l => l.trim());
+    const results = lines.map(l => {
+      try {
+        const e = JSON.parse(l);
+        const id = e.id;
+        const url = e.webpage_url || e.url || (id ? `https://www.youtube.com/watch?v=${id}` : null);
+        if (!url) return null;
+        return {
+          title:     e.title || 'Sin título',
+          url,
+          duration:  e.duration || 0,
+          thumbnail: id ? `https://img.youtube.com/vi/${id}/mqdefault.jpg` : null,
+          channel:   e.uploader || e.channel || ''
+        };
+      } catch { return null; }
+    }).filter(Boolean);
+    res.json({ results });
+  } catch (error) {
+    console.error('[YT Search]', error.message);
+    res.status(500).json({ error: 'Error en búsqueda', details: error.message });
+  }
 });
 
 // POST: Limpiar cola

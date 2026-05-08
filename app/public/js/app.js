@@ -1588,6 +1588,33 @@ function attachEventListeners() {
                 elements.clipVolumeValue.textContent = elements.clipVolumeSlider.value + '%';
         });
     }
+
+    // Historial: cargar al cambiar a esa pestaña
+    document.querySelectorAll('.qp-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            if (tab.dataset.tab === 'history') loadHistory();
+        });
+    });
+
+    // YouTube Search
+    const ytBtn   = document.getElementById('ytSearchBtn');
+    const ytInput = document.getElementById('ytSearchInput');
+    if (ytBtn)   ytBtn.addEventListener('click', doYouTubeSearch);
+    if (ytInput) ytInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doYouTubeSearch(); } });
+
+    // Sticker Picker
+    const stickerBtn = document.getElementById('stickerPickerBtn');
+    if (stickerBtn) stickerBtn.addEventListener('click', openStickerPicker);
+
+    // Cerrar sticker picker al hacer clic fuera
+    document.addEventListener('click', e => {
+        const panel = document.getElementById('stickerPickerPanel');
+        if (!panel || panel.classList.contains('hidden')) return;
+        if (!panel.contains(e.target) && e.target.id !== 'stickerPickerBtn') {
+            panel.classList.add('hidden');
+            _stickerPickerOpen = false;
+        }
+    });
 }
 
 // ============================================
@@ -1938,6 +1965,16 @@ function updateClipStatus(status, title) {
     if (elements.clipStopBtn) {
         elements.clipStopBtn.style.display = isPlaying ? '' : 'none';
     }
+    // Banner en el LCD del reproductor
+    const banner = document.getElementById('clipLcdBanner');
+    if (banner) {
+        if (isPlaying) {
+            banner.textContent = '📻 ' + (title || 'Clip sonando...');
+            banner.style.display = '';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
 }
 
 // ============================================
@@ -1994,6 +2031,226 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ============================================
+// HISTORIAL
+// ============================================
+
+async function loadHistory() {
+    const container = document.getElementById('historyContainer');
+    if (!container) return;
+    container.innerHTML = '<div class="qp-empty"><div class="ic">⏳</div><p>Cargando...</p></div>';
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/history`);
+        const data = await res.json();
+        const history = data.history || [];
+        if (!history.length) {
+            container.innerHTML = '<div class="qp-empty"><div class="ic">📜</div><h3>SIN HISTORIAL</h3><p>Las canciones reproducidas aparecerán aquí</p></div>';
+            return;
+        }
+        container.innerHTML = history.map((entry, i) => {
+            const loc = entry.addedLocation ? ` · 📍 ${escapeHtml(entry.addedLocation)}` : '';
+            const user = entry.addedBy ? `<div class="hist-meta">👤 ${escapeHtml(entry.addedBy)}${loc}</div>` : '';
+            const ago = timeAgo(entry.playedAt);
+            const thumb = extractThumbnailUrl(entry.url);
+            const thumbHtml = thumb ? `<img class="hist-thumb" src="${thumb}" alt="" loading="lazy">` : '<div class="hist-thumb-empty">🎵</div>';
+            return `<div class="hist-item">
+                ${thumbHtml}
+                <div class="hist-info">
+                    <div class="hist-title">${escapeHtml(entry.title)}</div>
+                    ${user}
+                    <div class="hist-time">${ago}</div>
+                </div>
+                <div class="hist-actions">
+                    <button class="hist-btn" onclick="histPlay(${i})" title="Reproducir">▶</button>
+                    <button class="hist-btn" onclick="histQueue(${i})" title="Añadir a cola">+</button>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Guardar referencia al historial para acciones
+        window._historyData = history;
+    } catch (e) {
+        container.innerHTML = '<div class="qp-empty"><div class="ic">❌</div><p>Error cargando historial</p></div>';
+    }
+}
+
+function timeAgo(ts) {
+    const diff = Date.now() - ts;
+    const m = Math.floor(diff / 60000);
+    const h = Math.floor(m / 60);
+    const d = Math.floor(h / 24);
+    if (d > 0) return `hace ${d}d`;
+    if (h > 0) return `hace ${h}h`;
+    if (m > 0) return `hace ${m}m`;
+    return 'ahora mismo';
+}
+
+async function histPlay(index) {
+    const entry = window._historyData?.[index];
+    if (!entry) return;
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/play`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: entry.url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        showNotification('▶️ Reproduciendo', entry.title, 'success');
+    } catch (e) {
+        showNotification('❌ Error', e.message, 'error');
+    }
+}
+
+async function histQueue(index) {
+    const entry = window._historyData?.[index];
+    if (!entry) return;
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/queue`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: entry.url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        showNotification('✅ Añadido', entry.title, 'success');
+    } catch (e) {
+        showNotification('❌ Error', e.message, 'error');
+    }
+}
+
+// ============================================
+// BÚSQUEDA YOUTUBE
+// ============================================
+
+let _ytSearchResults = [];
+
+async function doYouTubeSearch() {
+    const input = document.getElementById('ytSearchInput');
+    const resultsEl = document.getElementById('ytSearchResults');
+    const btn = document.getElementById('ytSearchBtn');
+    if (!input || !resultsEl) return;
+    const q = input.value.trim();
+    if (!q) return;
+
+    btn.disabled = true;
+    resultsEl.innerHTML = '<div class="qp-empty"><div class="ic">⏳</div><p>Buscando...</p></div>';
+
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/youtube-search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        _ytSearchResults = data.results || [];
+        if (!_ytSearchResults.length) {
+            resultsEl.innerHTML = '<div class="qp-empty"><div class="ic">🔍</div><p>Sin resultados</p></div>';
+            return;
+        }
+        resultsEl.innerHTML = _ytSearchResults.map((r, i) => {
+            const dur = r.duration ? `<span class="yt-duration">${formatTime(r.duration)}</span>` : '';
+            const ch  = r.channel ? `<span class="yt-channel">${escapeHtml(r.channel)}</span>` : '';
+            const thumb = r.thumbnail ? `<img class="yt-thumb" src="${r.thumbnail}" alt="" loading="lazy">` : '<div class="yt-thumb-empty">▶</div>';
+            return `<div class="yt-result-item">
+                ${thumb}
+                <div class="yt-result-info">
+                    <div class="yt-result-title">${escapeHtml(r.title)}</div>
+                    <div class="yt-result-meta">${ch}${dur}</div>
+                </div>
+                <div class="yt-result-actions">
+                    <button class="hist-btn" onclick="ytPlay(${i})" title="Reproducir ahora">▶</button>
+                    <button class="hist-btn" onclick="ytQueue(${i})" title="Añadir a cola">+</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        resultsEl.innerHTML = `<div class="qp-empty"><div class="ic">❌</div><p>${escapeHtml(e.message)}</p></div>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function ytPlay(index) {
+    const r = _ytSearchResults[index];
+    if (!r) return;
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/play`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: r.url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        showNotification('▶️ Reproduciendo', r.title, 'success');
+    } catch (e) {
+        showNotification('❌ Error', e.message, 'error');
+    }
+}
+
+async function ytQueue(index) {
+    const r = _ytSearchResults[index];
+    if (!r) return;
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/queue`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: r.url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        showNotification('✅ Cola', r.title, 'success');
+    } catch (e) {
+        showNotification('❌ Error', e.message, 'error');
+    }
+}
+
+// ============================================
+// STICKER PICKER
+// ============================================
+
+let _stickerPickerOpen = false;
+
+async function openStickerPicker() {
+    const panel = document.getElementById('stickerPickerPanel');
+    const grid  = document.getElementById('stickerPickerGrid');
+    if (!panel || !grid) return;
+
+    if (_stickerPickerOpen) {
+        panel.classList.add('hidden');
+        _stickerPickerOpen = false;
+        return;
+    }
+
+    _stickerPickerOpen = true;
+    panel.classList.remove('hidden');
+    grid.innerHTML = '<div style="padding:12px;color:#aaa;font-size:11px;">Cargando stickers...</div>';
+
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/gifs`);
+        const data = await res.json();
+        const gifs = data.gifs || [];
+        grid.innerHTML = gifs.map(url => {
+            const src = url.startsWith('/') ? `${getBackendUrl()}${url}` : url;
+            return `<div class="sp-item" onclick="selectSticker('${url}')" title="${url.split('/').pop()}">
+                <img src="${src}" alt="" loading="lazy">
+            </div>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = '<div style="padding:12px;color:#f55;font-size:11px;">Error cargando stickers</div>';
+    }
+}
+
+async function selectSticker(gifUrl) {
+    try {
+        const res = await fetch(`${getBackendUrl()}/api/auth/sticker`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stickerGif: gifUrl })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error');
+        showNotification('🎭 Sticker actualizado', 'Tu sticker ha cambiado', 'success');
+        const panel = document.getElementById('stickerPickerPanel');
+        if (panel) panel.classList.add('hidden');
+        _stickerPickerOpen = false;
+    } catch (e) {
+        showNotification('❌ Error', e.message, 'error');
+    }
 }
 
 // Estilos para slideOut animation

@@ -2151,6 +2151,234 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     .fan-wrap:nth-child(3n) .fan { width: 52px; height: 52px; }
 }
 
+/* ============================================
+   HISTORIAL
+   ============================================ */
+.hist-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    transition: background 0.15s;
+}
+.hist-item:hover { background: rgba(255,255,255,0.04); }
+.hist-thumb {
+    width: 52px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 2px;
+    flex-shrink: 0;
+    image-rendering: auto;
+}
+.hist-thumb-empty {
+    width: 52px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+.hist-info { flex: 1; min-width: 0; }
+.hist-title {
+    font-family: var(--pix);
+    font-size: 6px;
+    color: #e8e8ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.5;
+}
+.hist-meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--gold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+.hist-time {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 1px;
+}
+.hist-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.hist-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #fff;
+    border-radius: 2px;
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.hist-btn:hover { background: rgba(255,215,0,0.2); border-color: var(--gold); color: var(--gold); }
+
+/* ============================================
+   YOUTUBE SEARCH
+   ============================================ */
+.yt-search-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.yt-search-row input {
+    flex: 1;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,215,0,0.25);
+    border-radius: 2px;
+    padding: 8px 10px;
+    color: var(--gold);
+    font-family: var(--mono);
+    font-size: 14px;
+    outline: none;
+}
+.yt-search-row input:focus { border-color: var(--gold); }
+.yt-results-list { overflow-y: auto; max-height: calc(100vh - 200px); }
+.yt-result-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    transition: background 0.15s;
+}
+.yt-result-item:hover { background: rgba(255,255,255,0.03); }
+.yt-thumb {
+    width: 80px;
+    height: 45px;
+    object-fit: cover;
+    border-radius: 2px;
+    flex-shrink: 0;
+    image-rendering: auto;
+}
+.yt-thumb-empty {
+    width: 80px;
+    height: 45px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+.yt-result-info { flex: 1; min-width: 0; }
+.yt-result-title {
+    font-family: var(--pix);
+    font-size: 6px;
+    color: #e8e8ff;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.6;
+}
+.yt-result-meta {
+    display: flex;
+    gap: 6px;
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    flex-wrap: wrap;
+}
+.yt-channel { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100px; }
+.yt-duration { color: var(--gold); flex-shrink: 0; }
+.yt-result-actions { display: flex; gap: 4px; flex-shrink: 0; flex-direction: column; }
+
+/* ============================================
+   LCD CLIP BANNER
+   ============================================ */
+.lcd-clip-banner {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--orange);
+    background: rgba(255,140,0,0.12);
+    border-left: 2px solid var(--orange);
+    padding: 2px 6px;
+    margin: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 1px;
+    letter-spacing: 0.5px;
+}
+
+/* ============================================
+   STICKER PICKER
+   ============================================ */
+.btn-sticker {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 7px;
+    font-size: 14px;
+    transition: background 0.15s, border-color 0.15s;
+    line-height: 1;
+}
+.btn-sticker:hover { background: rgba(255,215,0,0.18); border-color: var(--gold); }
+.sticker-picker-panel {
+    position: fixed;
+    top: 56px;
+    right: 16px;
+    width: 280px;
+    max-height: 340px;
+    background: #1a1a2e;
+    border: 1px solid rgba(255,215,0,0.3);
+    border-radius: 4px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    z-index: 500;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.sticker-picker-panel.hidden { display: none; }
+.sp-header {
+    padding: 8px 12px;
+    font-family: var(--pix);
+    font-size: 7px;
+    color: var(--gold);
+    background: rgba(255,215,0,0.08);
+    border-bottom: 1px solid rgba(255,215,0,0.2);
+    flex-shrink: 0;
+}
+.sp-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 10px;
+    overflow-y: auto;
+    flex: 1;
+}
+.sp-item {
+    aspect-ratio: 1;
+    background: rgba(255,255,255,0.05);
+    border: 2px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    transition: border-color 0.15s, background 0.15s;
+    padding: 4px;
+}
+.sp-item:hover { border-color: var(--gold); background: rgba(255,215,0,0.1); }
+.sp-item img { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+
 /* === ALTURAS PEQUEÑAS (≤ 700px alto) === */
 @media (max-height: 700px) {
     .booth    { top: 2%; }
