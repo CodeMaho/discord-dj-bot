@@ -147,7 +147,7 @@
       <!-- Compass-clock above pipes -->
       <div class="compass">
         <div class="compass-ring"></div>
-        <div class="compass-core">⚓</div>
+        <div class="compass-core"><img src="assets/bandera.png" class="compass-flag" alt=""></div>
       </div>
 
       <!-- Pipes bar -->
@@ -179,6 +179,8 @@
               </span>
             </div>
             <img class="dj-avatar" src="assets/brookLogo.gif" alt="DJ Brook">
+            <img id="dj-spotlight-img" class="dj-spotlight" src="" alt="" style="display:none">
+            <img id="dj-turntable-img" class="dj-turntable" src="assets/dj.png" alt="" style="display:none">
             <div class="decks">
               <div class="deck"></div>
               <div class="deck"></div>
@@ -203,8 +205,9 @@
               <div class="lcd-bar-fill progress-fill" id="progressFill"></div>
             </div>
             <div class="lcd-time progress-time">
-              <span id="currentTime">0:00</span>
-              <span id="totalTime">0:00</span>
+              <span id="currentTime">00:00</span>
+              <span class="time-sep">-</span>
+              <span id="totalTime">00:00</span>
             </div>
             <canvas id="waveformCanvas" class="waveform-canvas" width="400" height="44" style="height:22px; margin-top:4px; opacity:0.55;"></canvas>
           </div>

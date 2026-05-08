@@ -583,7 +583,8 @@ let currentSong = {
   duration: 0,
   startedAt: null,
   addedBy: null,
-  addedLocation: null
+  addedLocation: null,
+  addedByGif: null
 };
 let savedAudioDevice = '';
 let activeConnections = 0;
@@ -1028,6 +1029,11 @@ const StickerServer = (() => {
     const user = users.find(u => u.id === session.userId);
     const savedGif = user?.stickerGif;
     const gifUrl = (savedGif && gifUrls.includes(savedGif)) ? savedGif : pick(gifUrls);
+    // Guardar el GIF asignado aleatoriamente para uso futuro (DJ spotlight, disconnected users)
+    if (user && !user.stickerGif) {
+      user.stickerGif = gifUrl;
+      saveUsers();
+    }
     const s = makeSticker(gifUrl, session.username);
     stickers.push(s);
     userStickers.set(session.userId, s.id);
@@ -1039,6 +1045,16 @@ const StickerServer = (() => {
     if (stickerId === undefined) return;
     const s = stickers.find(s => s.id === stickerId);
     if (s) { s.gifUrl = gifUrl; broadcastState(); }
+  }
+
+  // Obtener el GIF actual del sticker de un usuario (por userId)
+  function getUserGif(userId) {
+    const stickerId = userStickers.get(userId);
+    if (stickerId !== undefined) {
+      const s = stickers.find(s => s.id === stickerId);
+      if (s) return s.gifUrl;
+    }
+    return null;
   }
 
   function addUserSticker(session) {
@@ -1067,8 +1083,6 @@ const StickerServer = (() => {
         const minD = (a.size + b.size) / 2;
 
         if (dist < minD) {
-          if (!a.permanent) a.lives = Math.max(0, a.lives - 1);
-          if (!b.permanent) b.lives = Math.max(0, b.lives - 1);
           a.invincibleUntil = now + INVINCIBLE_MS;
           b.invincibleUntil = now + INVINCIBLE_MS;
           a.pulse = 1.8; b.pulse = 1.8;
@@ -1249,7 +1263,7 @@ const StickerServer = (() => {
     console.log('[StickerServer] Iniciado con sticker permanente zorotwerk');
   }
 
-  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker, updateUserSticker };
+  return { init, onBeat, setPlaying, handleMessage, handleDisconnect, assignClientId, sendStateTo, revive, addUserSticker, removeUserSticker, updateUserSticker, getUserGif };
 })();
 
 // Broadcast a todos los clientes conectados
@@ -1477,6 +1491,9 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       currentSong.startedAt = Date.now();
       currentSong.addedBy = addedBy;
       currentSong.addedLocation = addedLocation;
+      // GIF del DJ actual para el spotlight en la interfaz
+      const djUser = users.find(u => u.username === addedBy);
+      currentSong.addedByGif = (djUser ? (StickerServer.getUserGif(djUser.id) || djUser.stickerGif) : null) || null;
       // Registrar en historial (solo cuando la canción realmente empieza a sonar)
       historyLog.unshift({ title: videoTitle, url, addedBy: addedBy || null, addedLocation: addedLocation || null, playedAt: Date.now() });
       if (historyLog.length > 25) historyLog.pop();
@@ -2471,7 +2488,7 @@ app.post('/api/queue/:index/play', async (req, res) => {
 
   // Esperar a que taskkill termine antes de lanzar nuevo MPV
   await new Promise(resolve => setTimeout(resolve, 450));
-  playWithMPV(song.url, savedAudioDevice, song.title).catch(err => {
+  playWithMPV(song.url, savedAudioDevice, song.title, song.addedBy, song.addedLocation).catch(err => {
     console.error('[Queue Play] Error:', err.message);
   });
 });

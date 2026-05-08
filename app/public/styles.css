@@ -2399,5 +2399,47 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-
     .logo-chip img { width: 22px; height: 22px; }
     .logo-chip h1  { font-size: 7px; }
     .user-chip-area { top: 8px; right: 8px; }
+    .dj-spotlight   { width: 70px !important; height: 70px !important; }
+    .dj-turntable   { width: 90px !important; }
 }
 
+/* ── DJ Spotlight ───────────────────────────────────── */
+.dj-spotlight {
+    width: 90px; height: 90px;
+    image-rendering: pixelated;
+    filter: drop-shadow(0 0 12px rgba(255,215,0,0.7)) drop-shadow(0 4px 10px rgba(0,0,0,.6));
+    animation: djBob 2.4s ease-in-out infinite;
+    object-fit: contain;
+}
+
+.dj-turntable {
+    width: 120px;
+    image-rendering: pixelated;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,.7));
+    margin-top: -4px;
+}
+
+/* ── Compass flag image ─────────────────────────────── */
+.compass-flag {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+/* ── Time separator in LCD ──────────────────────────── */
+.time-sep {
+    color: var(--text-secondary);
+    margin: 0 2px;
+    font-size: inherit;
+}
+
+@media (min-width: 1200px) {
+    .dj-spotlight { width: 130px; height: 130px; }
+    .dj-turntable { width: 150px; }
+}
+
+@media (min-width: 900px) and (max-width: 1199px) {
+    .dj-spotlight { width: 110px; height: 110px; }
+    .dj-turntable { width: 130px; }
+}

@@ -325,6 +325,7 @@ const StickersSystem = (() => {
         crowdEl.appendChild(wrap);
 
         crowdFans[id] = { wrap, img, nameEl };
+        if (_currentDjUsername && (s.username || '') === _currentDjUsername) wrap.style.display = 'none';
         return crowdFans[id];
     }
 
@@ -597,7 +598,17 @@ const StickersSystem = (() => {
         });
     }
 
-    return { init, onServerState, onExternalBeat, setPlaying, sendToServer, startLocalPhysics, stopLocalPhysics };
+    let _currentDjUsername = null;
+
+    function setDjUsername(username) {
+        _currentDjUsername = username || null;
+        Object.values(crowdFans).forEach(fan => {
+            const fanUsername = fan.nameEl?.textContent || '';
+            fan.wrap.style.display = (_currentDjUsername && fanUsername === _currentDjUsername) ? 'none' : '';
+        });
+    }
+
+    return { init, onServerState, onExternalBeat, setPlaying, setDjUsername, sendToServer, startLocalPhysics, stopLocalPhysics };
 })();
 
 // ============================================
@@ -1229,6 +1240,32 @@ function updateNowPlaying(song) {
     StickersSystem.setPlaying(isPlaying);
     WaveformRenderer.setPlaying(isPlaying);
 
+    // DJ Spotlight: mostrar el sticker del DJ en lugar de brookLogo cuando hay canción activa
+    const djSpotlight = document.getElementById('dj-spotlight-img');
+    const djTurntable = document.getElementById('dj-turntable-img');
+    const djAvatar    = document.querySelector('.dj-avatar');
+    const decks       = document.querySelector('.decks');
+    const isActive    = song.status === 'playing' || song.status === 'paused';
+
+    if (djSpotlight && djTurntable && djAvatar) {
+        if (isActive && song.addedByGif) {
+            const gifSrc = song.addedByGif.startsWith('/') ? `${getBackendUrl()}${song.addedByGif}` : song.addedByGif;
+            if (djSpotlight.src !== gifSrc) djSpotlight.src = gifSrc;
+            djSpotlight.style.display = '';
+            djTurntable.style.display = '';
+            djAvatar.style.display    = 'none';
+            if (decks) decks.style.display = 'none';
+        } else {
+            djSpotlight.style.display = 'none';
+            djTurntable.style.display = 'none';
+            djAvatar.style.display    = '';
+            if (decks) decks.style.display = '';
+        }
+    }
+
+    // Ocultar el fan del DJ activo en el crowd
+    StickersSystem.setDjUsername(isActive && song.addedBy ? song.addedBy : null);
+
     // Actualizar estado de botones
     updateButtonStates();
 }
@@ -1448,11 +1485,11 @@ function updateButtonStates() {
     if (elements.playBtn) elements.playBtn.disabled = false;
     if (elements.addQueueBtn) elements.addQueueBtn.disabled = false;
 
-    // STOP ahora pausa: habilitado solo cuando está reproduciendo
+    // STOP: detiene la canción; habilitado cuando está reproduciendo O pausado
     if (elements.stopBtn) {
-        elements.stopBtn.disabled = !isPlaying;
+        elements.stopBtn.disabled = !(isPlaying || isPaused);
         const icon = elements.stopBtn.querySelector('.btn-icon');
-        if (icon) icon.textContent = '⏸';
+        if (icon) icon.textContent = '■';
     }
 
     if (isPlaying || isPaused) {
@@ -1765,7 +1802,14 @@ async function stopMedia() {
     if (status === 'playing' || status === 'paused') {
         if (elements.stopBtn) elements.stopBtn.disabled = true;
         try {
-            await pauseResumeMedia();
+            const response = await fetch(`${getBackendUrl()}/api/stop`, { method: 'POST' });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Error desconocido');
+            }
+            showNotification('⏹ Detenido', '', 'success');
+        } catch (error) {
+            showNotification('❌ Error', error.message || 'No se pudo detener', 'error');
         } finally {
             if (elements.stopBtn) elements.stopBtn.disabled = false;
         }
@@ -2015,16 +2059,14 @@ function showNotification(title, message, type = 'info') {
 // ============================================
 
 function formatTime(seconds) {
-    if (!seconds || seconds < 0) return '0:00';
-    
+    if (!seconds || seconds < 0) return '00:00';
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    
     if (hours > 0) {
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
 function escapeHtml(text) {
