@@ -112,7 +112,8 @@ let tunnelUrl = '';
 let serverConfig = {
   backendUrl: '',      // URL pública del backend (túnel de Cloudflare)
   audioDevice: '',     // Dispositivo de audio seleccionado
-  ionosApiUrl: ''      // URL del API en IONOS para publicar automáticamente
+  ionosApiUrl: '',     // URL del API en IONOS para publicar automáticamente
+  ytdlpBrowser: 'chrome' // Navegador para pasar cookies a yt-dlp (chrome, firefox, edge, brave, opera, chromium)
 };
 
 // Cargar configuración del servidor
@@ -867,14 +868,18 @@ const BeatAnalyzer = (() => {
 
     // Pipe yt-dlp → ffmpeg: más fiable que obtener la URL CDN por separado.
     // yt-dlp descarga el audio y ffmpeg lo convierte a PCM en tiempo real.
-    ytdlpProc = spawn('yt-dlp', [
+    const ytdlpArgs = [
       url,
       '--no-update',
       '-o', '-',
       '-f', 'bestaudio',
       '--no-playlist',
       '-q'
-    ]);
+    ];
+    if (serverConfig.ytdlpBrowser) {
+      ytdlpArgs.push('--cookies-from-browser', serverConfig.ytdlpBrowser);
+    }
+    ytdlpProc = spawn('yt-dlp', ytdlpArgs);
 
     proc = spawn('ffmpeg', [
       '-fflags', '+genpts+discardcorrupt',  // regenerar timestamps y descartar paquetes con DTS desordenado
@@ -1518,7 +1523,12 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       if (audioDevice && audioDevice.trim()) {
         mpvArgs.push('--audio-device=' + audioDevice);
       }
-      
+
+      // Pasar cookies del navegador a yt-dlp para acceder a videos restringidos
+      if (serverConfig.ytdlpBrowser) {
+        mpvArgs.push(`--ytdl-raw-options=cookies-from-browser=${serverConfig.ytdlpBrowser}`);
+      }
+
       mpvArgs.push(url);
       
       console.log('===== Iniciando reproducción =====');
