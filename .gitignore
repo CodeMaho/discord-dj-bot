@@ -1,32 +1,4 @@
-# Dependencies
-app/node_modules/
-
-# Config / state (generados en runtime, no van al repo)
-app/config/server-config.json
-app/data/player-state.json
-app/data/tunnel-url.txt
-
-# External binaries (demasiado grandes para git)
-app/tools/mpv/
-app/tools/vbcable/
-
-# Ejecutable compilado (se regenera con BUILD-EXE.ps1)
-DiscordDJ.exe
-
-# Windows
-nul
-Thumbs.db
-
-# Logs
+node_modules/
+app/data/users.json
 *.log
-npm-debug.log*
-
-# OS
-.DS_Store
-
-# IDE
-.vscode/
-.idea/
-
-# Claude Code
-.claude/
+.env
