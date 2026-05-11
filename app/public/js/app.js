@@ -939,6 +939,12 @@ function initializeWebSocket() {
             if (data.type === 'clip') {
                 updateClipStatus(data.status, data.title);
             }
+
+            if (data.type === 'song_error') {
+                const detail = data.message ? ` (${data.message})` : '';
+                const suffix = data.hasNext ? ' Saltando al siguiente...' : '';
+                showNotification('Video no disponible', `${data.title}${detail}.${suffix}`, 'error');
+            }
         } catch (error) {
             console.error('Error procesando mensaje WebSocket:', error);
         }
@@ -1218,7 +1224,10 @@ function updateNowPlaying(song) {
             'stopped': '⏹️ Detenido',
             'error':   '❌ Error'
         };
-        elements.statusText.textContent = statusMap[song.status] || 'Desconocido';
+        const errorLabel = song.status === 'error' && song.errorMessage
+            ? `❌ ${song.errorMessage}`
+            : statusMap[song.status] || 'Desconocido';
+        elements.statusText.textContent = errorLabel;
     }
 
     // Actualizar indicador visual

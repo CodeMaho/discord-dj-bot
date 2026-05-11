@@ -1487,6 +1487,7 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       currentSong.title = videoTitle;
       currentSong.url = url;
       currentSong.status = 'playing';
+      currentSong.errorMessage = null;
       currentSong.duration = duration;
       currentSong.startedAt = Date.now();
       currentSong.addedBy = addedBy;
@@ -1529,9 +1530,23 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       currentProcess = thisProcess;
       isStartingPlayback = false; // Liberar lock una vez que el proceso inició
 
+      let mpvErrorMessage = null;
+
       thisProcess.stdout.on('data', (data) => {
         const output = data.toString().trim();
         if (output) console.log(`[MPV stdout] ${output}`);
+        if (/not available/i.test(output))
+          mpvErrorMessage = 'Video no disponible (bloqueado o eliminado)';
+        else if (/video unavailable/i.test(output))
+          mpvErrorMessage = 'Video no disponible';
+        else if (/private video/i.test(output))
+          mpvErrorMessage = 'Video privado';
+        else if (/age.?restrict/i.test(output))
+          mpvErrorMessage = 'Video con restricción de edad';
+        else if (/copyright/i.test(output))
+          mpvErrorMessage = 'Video bloqueado por derechos de autor';
+        else if (/Failed to recognize file format/i.test(output))
+          mpvErrorMessage = mpvErrorMessage || 'No se pudo cargar el audio';
       });
 
       thisProcess.stderr.on('data', (data) => {
@@ -1545,13 +1560,35 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
         // Solo actualizar estado si este proceso sigue siendo el actual
         if (currentProcess === thisProcess) {
           currentProcess = null;
-          currentSong.status = 'stopped';
+          const failed = code !== 0 && !manualStop;
+          currentSong.status = failed ? 'error' : 'stopped';
+          if (failed) currentSong.errorMessage = mpvErrorMessage || 'Error al reproducir';
+
+          if (failed) {
+            const failedTitle = currentSong.title || 'Canción desconocida';
+            const errMsg = currentSong.errorMessage;
+            const hasNext = queue.length > 0;
+            const notifMsg = hasNext
+              ? `"${failedTitle}" no se puede reproducir. Saltando al siguiente...`
+              : `"${failedTitle}" no se puede reproducir.`;
+            console.log(`[MPV] Fallo: ${errMsg} — ${notifMsg}`);
+            wss.clients.forEach(c => {
+              if (c.readyState === WebSocket.OPEN)
+                c.send(JSON.stringify({ type: 'song_error', title: failedTitle, message: errMsg, hasNext }));
+            });
+          }
 
           if (manualStop) {
             console.log('[MPV] Stop manual detectado - NO auto-play');
             manualStop = false;
             broadcastStatus();
-          } else if (queue.length > 0) {
+          } else if (failed && queue.length > 0) {
+            console.log('[Auto-play] Video fallido, reproduciendo siguiente...');
+            playNext(audioDevice).catch(error => {
+              console.error('[Auto-play] Error:', error.message);
+              broadcastStatus();
+            });
+          } else if (!failed && queue.length > 0) {
             console.log('[Auto-play] Reproduciendo siguiente canción...');
             playNext(audioDevice).catch(error => {
               console.error('[Auto-play] Error:', error.message);
