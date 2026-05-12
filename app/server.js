@@ -852,7 +852,7 @@ const BeatAnalyzer = (() => {
     }
   }
 
-  function start(url) {
+  function start(url, withCookies = true) {
     stop();
     active         = true;
     avgEnergy      = 0;
@@ -866,6 +866,9 @@ const BeatAnalyzer = (() => {
     // Esperar 1 s a que MPV cree el IPC pipe antes de conectar el observador
     setTimeout(startMpvObserver, 1000);
 
+    let ytdlpFailed        = false;
+    let cookieErrorDetected = false;
+
     // Pipe yt-dlp → ffmpeg: más fiable que obtener la URL CDN por separado.
     // yt-dlp descarga el audio y ffmpeg lo convierte a PCM en tiempo real.
     const ytdlpArgs = [
@@ -876,7 +879,7 @@ const BeatAnalyzer = (() => {
       '--no-playlist',
       '-q'
     ];
-    if (serverConfig.ytdlpBrowser) {
+    if (withCookies && serverConfig.ytdlpBrowser) {
       ytdlpArgs.push('--cookies-from-browser', serverConfig.ytdlpBrowser);
     }
     ytdlpProc = spawn('yt-dlp', ytdlpArgs);
@@ -893,17 +896,34 @@ const BeatAnalyzer = (() => {
 
     ytdlpProc.stdout.pipe(proc.stdin);
 
+    ytdlpProc.stderr.on('data', d => {
+      if (/Could not copy.*cookie|cookie.*database/i.test(d.toString())) cookieErrorDetected = true;
+    });
+
     ytdlpProc.on('error', err => {
       if (err.code === 'ENOENT') console.log('[BeatAnalyzer] yt-dlp no encontrado');
       else console.error('[BeatAnalyzer] yt-dlp error:', err.message);
     });
     ytdlpProc.on('exit', (code) => {
       ytdlpProc = null;
-      if (code !== null && code !== 0) console.log('[BeatAnalyzer] yt-dlp salió con código:', code);
+      if (code !== null && code !== 0) {
+        ytdlpFailed = true;
+        console.log('[BeatAnalyzer] yt-dlp salió con código:', code);
+        // Cerrar stdin de ffmpeg para que termine limpiamente en lugar de crashear
+        if (proc && proc.stdin && !proc.stdin.destroyed) {
+          try { proc.stdin.end(); } catch (_) {}
+        }
+        // Si falló por cookies de Chrome bloqueadas, reintentar sin cookies
+        if (cookieErrorDetected && withCookies && serverConfig.ytdlpBrowser) {
+          console.log('[BeatAnalyzer] Reintentando sin cookies de navegador...');
+          setTimeout(() => start(url, false), 300);
+        }
+      }
     });
 
     proc.stdout.on('data', processPCM);
     proc.stderr.on('data', d => {
+      if (ytdlpFailed) return; // Suprimir errores de ffmpeg causados por fallo de yt-dlp
       const msg = d.toString().trim();
       if (msg) console.error('[BeatAnalyzer ffmpeg]', msg);
     });
@@ -916,7 +936,7 @@ const BeatAnalyzer = (() => {
     });
     proc.on('exit', (code) => {
       proc = null;
-      if (code !== null && code !== 0) console.log('[BeatAnalyzer] ffmpeg salió con código:', code);
+      if (code !== null && code !== 0 && !ytdlpFailed) console.log('[BeatAnalyzer] ffmpeg salió con código:', code);
     });
 
     console.log('[BeatAnalyzer] Análisis de audio iniciado (yt-dlp → ffmpeg pipe)');
@@ -1488,7 +1508,7 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
 
   return new Promise((resolve, reject) => {
 
-    const startPlayback = (videoTitle, duration = 0) => {
+    const startPlayback = (videoTitle, duration = 0, useCookies = true) => {
       currentSong.title = videoTitle;
       currentSong.url = url;
       currentSong.status = 'playing';
@@ -1504,7 +1524,7 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       historyLog.unshift({ title: videoTitle, url, addedBy: addedBy || null, addedLocation: addedLocation || null, playedAt: Date.now() });
       if (historyLog.length > 25) historyLog.pop();
       broadcastStatus();
-      BeatAnalyzer.start(url);
+      BeatAnalyzer.start(url, useCookies);
       StickerServer.setPlaying(true);
       
       // Ruta del IPC: en Windows se requiere el path completo \\.\pipe\<name>
@@ -1525,7 +1545,7 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       }
 
       // Pasar cookies del navegador a yt-dlp para acceder a videos restringidos
-      if (serverConfig.ytdlpBrowser) {
+      if (useCookies && serverConfig.ytdlpBrowser) {
         mpvArgs.push(`--ytdl-raw-options=cookies-from-browser=${serverConfig.ytdlpBrowser}`);
       }
 
@@ -1540,11 +1560,13 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
       currentProcess = thisProcess;
       isStartingPlayback = false; // Liberar lock una vez que el proceso inició
 
-      let mpvErrorMessage = null;
+      let mpvErrorMessage      = null;
+      let cookieErrorDetected  = false;
 
       thisProcess.stdout.on('data', (data) => {
         const output = data.toString().trim();
         if (output) console.log(`[MPV stdout] ${output}`);
+        if (/Could not copy.*cookie|cookie.*database/i.test(output)) cookieErrorDetected = true;
         if (/not available/i.test(output))
           mpvErrorMessage = 'Video no disponible (bloqueado o eliminado)';
         else if (/video unavailable/i.test(output))
@@ -1570,6 +1592,15 @@ async function playWithMPV(url, audioDevice, title = null, addedBy = null, added
         // Solo actualizar estado si este proceso sigue siendo el actual
         if (currentProcess === thisProcess) {
           currentProcess = null;
+
+          // Si Chrome tenía la BD de cookies bloqueada, reintentar sin cookies
+          if (code !== 0 && !manualStop && cookieErrorDetected && useCookies && serverConfig.ytdlpBrowser) {
+            console.log('[MPV] Error de cookies detectado, reintentando sin cookies...');
+            BeatAnalyzer.stop();
+            setTimeout(() => startPlayback(videoTitle, duration, false), 300);
+            return;
+          }
+
           const failed = code !== 0 && !manualStop;
           currentSong.status = failed ? 'error' : 'stopped';
           if (failed) currentSong.errorMessage = mpvErrorMessage || 'Error al reproducir';
