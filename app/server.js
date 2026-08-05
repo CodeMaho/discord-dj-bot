@@ -18,6 +18,15 @@ const TUNNEL_URL_FILE = path.join(__dirname, 'data',   'tunnel-url.txt');
 const USERS_FILE      = path.join(__dirname, 'data',   'users.json');
 
 // ===== SISTEMA DE AUTENTICACIÓN =====
+//
+// Las credenciales viven en Keycloak (api.mingod.es), no aquí. users.json pasa a
+// ser un almacén de PERFIL: ubicación autorizada, sticker y fecha de alta,
+// indexado por `kcSub` (el claim `sub` del token, estable aunque el usuario se
+// renombre). Ya no guarda contraseñas.
+
+const keycloak = require('./keycloak');
+const perfiles = require('./perfiles');
+const pase = require('./pase');
 
 let users = [];
 const sessions = new Map(); // token → { userId, username, locationLabel, expiresAt }
@@ -38,17 +47,22 @@ function saveUsers() {
   }
 }
 
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return { hash, salt };
+/** Localiza el perfil de un usuario de Keycloak (adopta el antiguo si lo hay). */
+function perfilPorSub(sub, username) {
+  const { perfil, adoptado } = perfiles.buscarPerfil(users, sub, username);
+  if (adoptado) {
+    console.log(`[Auth] Perfil antiguo adoptado por Keycloak: ${username}`);
+    saveUsers();
+  }
+  return perfil;
 }
 
-function verifyPassword(password, hash, salt) {
-  try {
-    const test = crypto.scryptSync(password, salt, 64).toString('hex');
-    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(test, 'hex'));
-  } catch { return false; }
+/** Crea el perfil local de un usuario recién identificado, fijando su ubicación. */
+function crearPerfil(sub, username, ip, location) {
+  const perfil = perfiles.nuevoPerfil(sub, username, ip, location);
+  users.push(perfil);
+  saveUsers();
+  return perfil;
 }
 
 function generateToken() {
@@ -104,6 +118,17 @@ function requireAuth(req, res, next) {
 }
 
 loadUsers();
+
+keycloak.cargarConfig();
+if (keycloak.habilitado()) {
+  const kc = keycloak.configPublica();
+  console.log(`[Auth] Identidad centralizada en Keycloak vía la puerta web (app "${kc.clientId}").`);
+  console.log('[Auth] Este servidor no maneja contraseñas: solo verifica pases firmados.');
+} else {
+  console.log('[Auth] AVISO: falta el secreto de pase — este servidor no aceptará sesiones.');
+  console.log('[Auth] Rellena paseSecret en app/config/keycloak.json (o KC_PASE_SECRET) con el mismo');
+  console.log('[Auth] valor que "pase_secret" del config.php de la puerta en dj.mingod.es.');
+}
 
 // Variable global para la URL del túnel
 let tunnelUrl = '';
@@ -1697,64 +1722,53 @@ app.get('/api/auth/location', async (req, res) => {
   res.json({ ip, location });
 });
 
-// Registro de nuevo usuario
-app.post('/api/auth/register', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username?.trim() || !password) {
-    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
+// Sondeo público: la web lo usa para saber si este backend está encendido.
+app.get('/api/ping', (req, res) => res.json({ ok: true }));
+
+// Canje del pase de la puerta por una sesión de este servidor.
+//
+// Aquí NO hay login ni registro: de eso se encarga la web (login.php /
+// registro.php del webspace), que valida contra Keycloak. Este endpoint solo
+// comprueba una firma HMAC y crea la sesión local. Consecuencia: el usuario
+// puede identificarse en la web aunque este servidor esté apagado, y la web se
+// engancha sola en cuanto arranca.
+app.post('/api/auth/sesion', async (req, res) => {
+  const secreto = keycloak.paseSecret();
+  if (!secreto) {
+    return res.status(503).json({ error: 'Este servidor no tiene configurado el secreto de pase' });
   }
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+
+  const claims = pase.verificar(req.body?.pase, secreto, keycloak.configPublica().clientId);
+  if (!claims) {
+    return res.status(401).json({ error: 'Pase inválido o caducado' });
   }
-  if (users.find(u => u.username.toLowerCase() === username.trim().toLowerCase())) {
-    return res.status(400).json({ error: 'El nombre de usuario ya existe' });
-  }
 
-  const ip = getClientIp(req);
-  const location = await getIpLocation(ip);
-  const locationLabel = location?.isLocal
-    ? 'Local'
-    : [location?.city, location?.country].filter(Boolean).join(', ') || 'Desconocido';
-  const { hash, salt } = hashPassword(password);
-
-  const user = {
-    id: crypto.randomBytes(16).toString('hex'),
-    username: username.trim(),
-    passwordHash: hash,
-    passwordSalt: salt,
-    locationLabel,
-    allowedCountry: location?.countryCode || 'UNKNOWN',
-    allowedRegion: location?.region || '',
-    locationData: location,
-    registeredIp: ip,
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(user);
-  saveUsers();
-  console.log(`[Auth] Registro: ${user.username} desde ${ip} (${location?.country || 'desconocido'})`);
-  res.json({ success: true });
-});
-
-// Login
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Faltan credenciales' });
-
-  const user = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
-  if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
-    return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+  const roles = Array.isArray(claims.roles) ? claims.roles : [];
+  if (!roles.includes('user') && !roles.includes('admin')) {
+    return res.status(403).json({ error: 'Tu cuenta no tiene acceso a esta aplicación' });
   }
 
   const ip = getClientIp(req);
-  if (user.allowedCountry !== 'LOCAL' && user.allowedCountry !== 'UNKNOWN') {
+  const nombre = claims.usuario || claims.sub;
+  let user = perfilPorSub(claims.sub, nombre);
+
+  if (!user) {
     const loc = await getIpLocation(ip);
-    if (loc && !loc.isLocal && loc.countryCode !== user.allowedCountry) {
-      console.log(`[Auth] Denegado: ${user.username} desde ${ip} (${loc.country}) — esperado: ${user.allowedCountry}`);
-      return res.status(403).json({
-        error: `Acceso denegado. Tu ubicación actual (${loc.country}) no coincide con la ubicación registrada (${user.locationData?.country || user.allowedCountry}).`
-      });
+    user = crearPerfil(claims.sub, nombre, ip, loc);
+    console.log(`[Auth] Perfil creado: ${nombre} desde ${ip} (${loc?.country || 'desconocido'})`);
+  } else {
+    if (user.allowedCountry !== 'LOCAL' && user.allowedCountry !== 'UNKNOWN') {
+      const loc = await getIpLocation(ip);
+      const paisDenegado = perfiles.ubicacionDenegada(user, loc);
+      if (paisDenegado) {
+        console.log(`[Auth] Denegado: ${user.username} desde ${ip} (${paisDenegado}) — esperado: ${user.allowedCountry}`);
+        return res.status(403).json({
+          error: `Acceso denegado. Tu ubicación actual (${paisDenegado}) no coincide con la ubicación registrada (${user.locationData?.country || user.allowedCountry}).`
+        });
+      }
     }
+    if (user.username !== nombre) user.username = nombre;
+    saveUsers();
   }
 
   const token = generateToken();
@@ -1762,13 +1776,17 @@ app.post('/api/auth/login', async (req, res) => {
     userId: user.id,
     username: user.username,
     locationLabel: user.locationLabel,
+    roles,
     expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
   });
 
-  console.log(`[Auth] Login: ${user.username} desde ${ip}`);
+  console.log(`[Auth] Sesión por pase: ${user.username} desde ${ip}`);
   res.json({ success: true, token, username: user.username, locationLabel: user.locationLabel });
 });
 
+// --- ELIMINADO: registro y login propios ---------------------------------
+// `/api/auth/register` y `/api/auth/login` ya no existen. Las credenciales son
+// las de Keycloak y se manejan en la web; este servidor nunca ve una contraseña.
 // Logout
 app.post('/api/auth/logout', requireAuth, (req, res) => {
   const token = req.headers['authorization']?.slice(7);

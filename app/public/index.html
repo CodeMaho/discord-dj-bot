@@ -314,33 +314,13 @@
       <h2>DISCORD<br>DJ BROOK</h2>
       <p class="auth-subtitle">CONTROLADOR MUSICAL v2.0</p>
     </div>
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="auth-tab-login">&gt; LOGIN</button>
-      <button class="auth-tab" id="auth-tab-register">REGISTER</button>
-    </div>
-    <div id="auth-login-form">
-      <div class="input-group">
-        <label for="auth-username">USUARIO</label>
-        <input type="text" id="auth-username" placeholder="tu_nombre_de_usuario" autocomplete="username">
-      </div>
-      <div class="input-group">
-        <label for="auth-password">CONTRASEÑA</label>
-        <input type="password" id="auth-password" placeholder="••••••••" autocomplete="current-password">
-      </div>
-      <div id="auth-login-error" class="auth-error" style="display:none"></div>
-      <button class="btn btn-primary auth-submit" id="auth-login-btn">▶ INICIAR SESION</button>
-    </div>
-    <div id="auth-register-form" style="display:none">
-      <div class="input-group">
-        <label for="reg-username">USUARIO</label>
-        <input type="text" id="reg-username" placeholder="elige_un_nombre" autocomplete="username">
-      </div>
-      <div class="input-group">
-        <label for="reg-password">CONTRASEÑA</label>
-        <input type="password" id="reg-password" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
-      </div>
-      <div id="auth-register-error" class="auth-error" style="display:none"></div>
-      <button class="btn btn-primary auth-submit" id="auth-register-btn">+ REGISTRARSE</button>
+    <!-- Sin formularios: el login y el registro los hace la puerta del webspace
+         (login.php / registro.php) contra Keycloak. Al llegar aquí el usuario ya
+         está identificado. Este panel solo informa del enganche con el
+         reproductor, que puede estar apagado. -->
+    <div id="auth-estado" class="auth-estado">
+      <div class="auth-estado-titulo">Identificando…</div>
+      <div class="auth-estado-detalle">Leyendo tu sesión.</div>
     </div>
   </div>
   <div class="auth-scanline"></div>

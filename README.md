@@ -206,6 +206,68 @@ El servidor expone una API REST en `http://localhost:3000` y un WebSocket en el 
 
 ---
 
+## Autenticación (Keycloak centralizado)
+
+**Este servidor no tiene login ni registro, y nunca ve una contraseña.** De eso se encarga la
+web: la puerta del webspace (`login.php` / `registro.php` en `dj.mingod.es`), que valida contra
+Keycloak. Aquí solo se comprueba una firma.
+
+### Cómo encaja
+
+```
+navegador ──1── login.php (dj.mingod.es) ──> broker ──> Keycloak
+     │            cookie de sesión de la puerta
+     │
+     ├──2── GET /api/pase.php ──> pase firmado (HMAC, vive 120 s)
+     │
+     └──3── POST <backend>/api/auth/sesion { pase }
+                    │
+                    └── verifica la firma con el secreto compartido
+                        y emite el token de sesión de siempre
+```
+
+El backend vive en otro origen (el túnel), así que no puede leer la cookie de la puerta. El pase
+es el puente: lo firma la puerta, que ya sabe quién eres, y este servidor lo verifica sin
+llamar a nadie.
+
+**Puedes entrar en la web con el reproductor apagado.** La identidad la da la puerta, que siempre
+está disponible. La web detecta cuándo arranca el backend (sondea `/api/ping`) y canjea el pase
+sola, sin que tengas que volver a identificarte.
+
+### Lo que cambia respecto a antes
+
+- **`users.json` ya no guarda contraseñas.** Es un almacén de perfil —ubicación autorizada,
+  sticker, fecha de alta— indexado por `kcSub`, el identificador estable de Keycloak.
+- **El `client_secret` de Keycloak ya no vive en este PC.** Este servidor no habla con el broker;
+  solo verifica pases. Si la máquina se ve comprometida, no se llevan las credenciales de la app.
+- **La geo-restricción se mantiene:** la cuenta solo entra desde el país donde se dio de alta. En
+  cuentas nuevas ese país se fija en el primer acceso.
+- **El token de sesión y el WebSocket no cambian.**
+- Endpoints eliminados: `POST /api/auth/register` y `POST /api/auth/login`.
+  Nuevos: `GET /api/ping` (público) y `POST /api/auth/sesion`.
+
+### Configuración
+
+`cp app/config/keycloak.example.json app/config/keycloak.json` y poner en `paseSecret`
+**el mismo valor** que `'pase_secret'` del `config.php` de la puerta en `dj.mingod.es`.
+Alternativa: la variable `KC_PASE_SECRET`, que tiene prioridad. `keycloak.json` no se versiona.
+
+Sin ese secreto el servidor **arranca igual** y avisa por consola, pero no acepta sesiones.
+
+> Si la puerta y el backend no comparten exactamente el mismo secreto, todo falla con
+> "Pase inválido o caducado". Es el error más probable al desplegar.
+
+### Migración de las cuentas existentes
+
+Cada usuario crea su cuenta en Keycloak con **el mismo nombre** que tenía (desde `registro.php`,
+o dado de alta a mano). La primera vez que entre, su perfil antiguo se **adopta**: conserva
+sticker y país autorizado, y se le borran los restos de contraseña. No se duplica nada.
+
+`npm test` cubre la verificación de pases, la adopción de perfiles, la geo-restricción y la
+interoperabilidad de la firma entre el PHP de la puerta y este servidor (59 comprobaciones).
+
+---
+
 ## Solución de problemas
 
 ### No se escucha audio en Discord

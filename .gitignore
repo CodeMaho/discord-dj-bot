@@ -1,4 +1,13 @@
 node_modules/
 app/data/users.json
+app/config/keycloak.json
 *.log
 .env
+
+# Binarios de terceros: el instalador los descarga. mpv.exe pesa 117 MB, por
+# encima del limite de 100 MB por fichero de GitHub: con esto dentro el push falla.
+app/tools/
+
+# Estado de ejecucion: cambia en cada arranque y no aporta nada al historial.
+app/data/player-state.json
+app/data/tunnel-url.txt

@@ -1,60 +1,32 @@
 // ============================================
-// Discord DJ — Sistema de Autenticación
+// Discord DJ — Identidad (Keycloak, vía la puerta)
 // ============================================
+//
+// Ya NO hay formularios de login ni de registro aquí. De eso se encarga la
+// puerta del webspace (login.php / registro.php), que valida contra Keycloak.
+// Cuando esta página se carga, el usuario YA está identificado: la puerta no
+// habría servido el fichero si no.
+//
+// Lo único que queda es enganchar esa identidad con el backend, que vive en
+// otro origen (el túnel) y no puede leer la cookie de la puerta:
+//
+//   1. GET /api/perfil.php  -> quién soy. Funciona SIEMPRE, esté o no el
+//      backend encendido. Por eso puedes entrar antes de arrancarlo.
+//   2. Cuando se detecta el backend, GET /api/pase.php pide a la puerta un pase
+//      firmado y se canjea en POST <backend>/api/auth/sesion por una sesión.
+//   3. Si el backend no está, se reintenta en segundo plano hasta que aparezca.
 
 (function () {
     const TOKEN_KEY = 'djToken';
+    const REINTENTO_MS = 5000;
 
-    // Comprueba que una URL de backend está activa (responde en < 4s).
-    async function probeBackend(url) {
-        try {
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 4000);
-            const r = await _fetch(url + '/api/auth/location', { signal: ctrl.signal, cache: 'no-cache' });
-            clearTimeout(timer);
-            return r.ok || r.status === 401 || r.status === 403;
-        } catch (_) { return false; }
-    }
+    let usuario = null;      // { id, username, nombre, roles }
+    let enlazando = false;
 
-    // Recoge todos los candidatos y devuelve el primero que responda.
-    async function resolveApiBase() {
-        const seen = new Set();
-        const candidates = [];
-
-        function add(url) {
-            if (!url) return;
-            url = url.replace(/\/$/, '');
-            if (!url.startsWith('http')) url = 'https://' + url;
-            if (!seen.has(url)) { seen.add(url); candidates.push(url); }
-        }
-
-        // 1. Variable ya cargada en esta sesión
-        if (typeof getBackendUrl === 'function') add(getBackendUrl());
-        // 2. localStorage / DJ_CONFIG (sincróno, no depende de tryConnect)
-        if (typeof getInitialBackendUrl === 'function') add(getInitialBackendUrl());
-        // 3. PHP de IONOS (fuente de verdad del túnel actual)
-        try {
-            const r = await _fetch(window.location.origin + '/api/config.php', { cache: 'no-cache' });
-            if (r.ok) { const d = await r.json(); add(d.backendUrl); }
-        } catch (_) {}
-        // 4. JSON estático
-        try {
-            const r = await _fetch(window.location.origin + '/api/backend-url.json', { cache: 'no-cache' });
-            if (r.ok) { const d = await r.json(); add(d.backendUrl); }
-        } catch (_) {}
-
-        // Probar cada candidato y devolver el primero que responda
-        for (const url of candidates) {
-            if (url === window.location.origin) continue; // el local se prueba al final
-            if (await probeBackend(url)) return url;
-        }
-
-        // Fallback: mismo origen (acceso local)
-        return window.location.origin;
-    }
-
-    // ── Fetch override: añade Authorization a todas las llamadas al backend ──
+    // ── Fetch original, sin la cabecera de sesión ───────────────────────────
     const _fetch = window.fetch.bind(window);
+
+    // ── Fetch override: añade Authorization a las llamadas al backend ───────
     window.fetch = function (url, opts) {
         opts = opts || {};
         const token = localStorage.getItem(TOKEN_KEY);
@@ -67,7 +39,6 @@
     };
 
     // ── WebSocket URL override: añade ?token= ───────────────────────────────
-    // Se ejecuta después de que config.js haya definido getWebSocketUrl()
     document.addEventListener('DOMContentLoaded', function () {
         if (typeof window.getWebSocketUrl === 'function') {
             const _origWsUrl = window.getWebSocketUrl;
@@ -79,59 +50,10 @@
         }
     }, { once: true });
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ─────────────────────────────────────────────────────────────
     function getToken() { return localStorage.getItem(TOKEN_KEY); }
     function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
     function clearToken() { localStorage.removeItem(TOKEN_KEY); }
-
-    function showView(view) {
-        document.getElementById('auth-login-form').style.display  = view === 'login'    ? '' : 'none';
-        document.getElementById('auth-register-form').style.display = view === 'register' ? '' : 'none';
-        document.getElementById('auth-tab-login').classList.toggle('active', view === 'login');
-        document.getElementById('auth-tab-register').classList.toggle('active', view === 'register');
-        clearErrors();
-    }
-
-    function clearErrors() {
-        document.getElementById('auth-login-error').style.display    = 'none';
-        document.getElementById('auth-register-error').style.display = 'none';
-    }
-
-    function showError(formId, msg) {
-        const el = document.getElementById(formId + '-error');
-        el.textContent = msg;
-        el.style.display = 'block';
-    }
-
-    function setLoading(btnId, loading) {
-        const btn = document.getElementById(btnId);
-        btn.disabled = loading;
-        btn.textContent = loading ? 'Por favor espera...' : (btnId === 'auth-login-btn' ? 'Iniciar Sesión' : 'Registrarse');
-    }
-
-    // ── Arrancar la app después de autenticarse ──────────────────────────────
-    function launchApp(username, locationLabel) {
-        window.djAuthenticated = true;
-
-        // Actualizar UI de usuario en el header
-        const userDisplay = document.getElementById('user-display');
-        if (userDisplay) {
-            userDisplay.innerHTML = '<span class="user-icon">👤</span>' + escapeHtml(username)
-                + ' <span class="user-location">📍 ' + escapeHtml(locationLabel) + '</span>';
-        }
-        const userInfo = document.getElementById('user-info');
-        if (userInfo) userInfo.style.display = 'flex';
-
-        // Ocultar overlay
-        const overlay = document.getElementById('auth-overlay');
-        if (overlay) overlay.classList.add('hidden');
-
-        // Inicializar la app si DOMContentLoaded ya disparó
-        if (typeof window.djPendingInit === 'function') {
-            window.djPendingInit();
-            window.djPendingInit = null;
-        }
-    }
 
     function escapeHtml(str) {
         return String(str).replace(/[&<>"']/g, function (c) {
@@ -139,123 +61,185 @@
         });
     }
 
-    // ── Login ────────────────────────────────────────────────────────────────
-    async function doLogin() {
-        const username = document.getElementById('auth-username').value.trim();
-        const password = document.getElementById('auth-password').value;
-        if (!username || !password) { showError('auth-login', 'Completa todos los campos'); return; }
-
-        setLoading('auth-login-btn', true);
-        try {
-            const res = await _fetch((await resolveApiBase()) + '/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-            const data = await res.json();
-            if (data.success) {
-                setToken(data.token);
-                launchApp(data.username, data.locationLabel);
-            } else {
-                showError('auth-login', data.error || 'Error al iniciar sesión');
-            }
-        } catch (e) {
-            showError('auth-login', 'Error de conexión con el servidor');
-        } finally {
-            setLoading('auth-login-btn', false);
-        }
+    function estado(titulo, detalle, mostrarReintento) {
+        const el = document.getElementById('auth-estado');
+        if (!el) return;
+        el.innerHTML = '<div class="auth-estado-titulo">' + escapeHtml(titulo) + '</div>'
+            + '<div class="auth-estado-detalle">' + escapeHtml(detalle) + '</div>'
+            + (mostrarReintento ? '<button class="btn btn-primary auth-submit" id="auth-reintentar">Reintentar ahora</button>' : '');
+        const btn = document.getElementById('auth-reintentar');
+        if (btn) btn.addEventListener('click', () => enlazarConBackend(true));
     }
 
-    // ── Registro ─────────────────────────────────────────────────────────────
-    async function doRegister() {
-        const username = document.getElementById('reg-username').value.trim();
-        const password = document.getElementById('reg-password').value;
-        if (!username || !password) { showError('auth-register', 'Completa todos los campos'); return; }
-        if (password.length < 6) { showError('auth-register', 'La contraseña debe tener al menos 6 caracteres'); return; }
-
-        setLoading('auth-register-btn', true);
+    // ── Comprobar si un backend responde ────────────────────────────────────
+    async function probeBackend(url) {
         try {
-            const res = await _fetch((await resolveApiBase()) + '/api/auth/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-            const data = await res.json();
-            if (data.success) {
-                // Tras registrarse, hacer login automático
-                document.getElementById('auth-username').value = username;
-                document.getElementById('auth-password').value = password;
-                showView('login');
-                showError('auth-login', '');
-                const loginEl = document.getElementById('auth-login-error');
-                loginEl.style.color = '#57F287';
-                loginEl.textContent = 'Registro exitoso. Inicia sesión.';
-                loginEl.style.display = 'block';
-            } else {
-                showError('auth-register', data.error || 'Error al registrarse');
-            }
-        } catch (e) {
-            showError('auth-register', 'Error de conexión con el servidor');
-        } finally {
-            setLoading('auth-register-btn', false);
-        }
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 4000);
+            const r = await _fetch(url + '/api/ping', { signal: ctrl.signal, cache: 'no-cache' });
+            clearTimeout(timer);
+            return r.ok;
+        } catch (_) { return false; }
     }
 
-    // ── Logout ───────────────────────────────────────────────────────────────
-    async function doLogout() {
-        const token = getToken();
-        if (token) {
-            _fetch((await resolveApiBase()) + '/api/auth/logout', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + token }
-            }).catch(() => {});
+    // Recoge los candidatos de URL de backend y devuelve el primero que responda.
+    async function resolveApiBase() {
+        const seen = new Set();
+        const candidates = [];
+
+        function add(url) {
+            if (!url) return;
+            url = url.replace(/\/$/, '');
+            if (!url.startsWith('http')) url = 'https://' + url;
+            if (!seen.has(url)) { seen.add(url); candidates.push(url); }
         }
-        clearToken();
-        location.reload();
+
+        if (typeof getBackendUrl === 'function') add(getBackendUrl());
+        if (typeof getInitialBackendUrl === 'function') add(getInitialBackendUrl());
+        try {
+            const r = await _fetch(window.location.origin + '/api/config.php', { cache: 'no-cache' });
+            if (r.ok) { const d = await r.json(); add(d.backendUrl); }
+        } catch (_) {}
+        try {
+            const r = await _fetch(window.location.origin + '/api/backend-url.json', { cache: 'no-cache' });
+            if (r.ok) { const d = await r.json(); add(d.backendUrl); }
+        } catch (_) {}
+
+        for (const url of candidates) {
+            if (url === window.location.origin) continue;
+            if (await probeBackend(url)) return url;
+        }
+        return null;
     }
 
-    // ── Verificar token existente ─────────────────────────────────────────────
-    async function checkExistingToken() {
-        const token = getToken();
-        if (!token) return false;
+    // ── Quién soy (según la puerta) ─────────────────────────────────────────
+    async function cargarIdentidad() {
+        const r = await _fetch('/api/perfil.php', { cache: 'no-store' });
+        if (r.status === 401 || r.status === 409) {
+            // La sesión de la puerta caducó: volver a ella.
+            location.href = '/login.php?volver=' + encodeURIComponent(location.pathname);
+            return null;
+        }
+        if (!r.ok) throw new Error('No se pudo leer el perfil');
+        return await r.json();
+    }
+
+    // ── Canjear el pase de la puerta por una sesión del backend ─────────────
+    async function enlazarConBackend(forzar) {
+        if (enlazando) return false;
+        enlazando = true;
         try {
-            const res = await _fetch((await resolveApiBase()) + '/api/auth/me', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                launchApp(data.username, data.locationLabel);
+            if (!forzar && getToken() && await sesionValida()) {
+                arrancarApp();
                 return true;
             }
-        } catch (e) {}
-        clearToken();
-        return false;
+
+            estado('Buscando el reproductor…', 'Comprobando si el backend está encendido.', false);
+            const base = await resolveApiBase();
+            if (!base) {
+                estado('El reproductor no está encendido',
+                       'Ya estás identificado como ' + (usuario ? usuario.username : '') +
+                       '. En cuanto arranque, esto se conecta solo.', true);
+                return false;
+            }
+
+            const rp = await _fetch('/api/pase.php', { cache: 'no-store' });
+            if (!rp.ok) {
+                estado('No se pudo obtener el pase',
+                       'La puerta respondió ' + rp.status + '. Prueba a recargar la página.', true);
+                return false;
+            }
+            const { pase } = await rp.json();
+
+            const rs = await _fetch(base + '/api/auth/sesion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pase })
+            });
+            const d = await rs.json().catch(() => ({}));
+
+            if (!rs.ok || !d.token) {
+                estado('El reproductor rechazó la sesión',
+                       d.error || ('Respondió ' + rs.status + '.'), true);
+                return false;
+            }
+
+            setToken(d.token);
+            arrancarApp(d.locationLabel);
+            return true;
+        } catch (e) {
+            estado('Error de conexión', String(e && e.message ? e.message : e), true);
+            return false;
+        } finally {
+            enlazando = false;
+        }
     }
 
-    // ── Inicialización del overlay ────────────────────────────────────────────
+    async function sesionValida() {
+        try {
+            const base = await resolveApiBase();
+            if (!base) return false;
+            const r = await _fetch(base + '/api/auth/me', {
+                headers: { 'Authorization': 'Bearer ' + getToken() }
+            });
+            if (!r.ok) return false;
+            const d = await r.json();
+            window.djLocationLabel = d.locationLabel;
+            return true;
+        } catch (_) { return false; }
+    }
+
+    // ── Arrancar la app ─────────────────────────────────────────────────────
+    function arrancarApp(locationLabel) {
+        window.djAuthenticated = true;
+
+        const userDisplay = document.getElementById('user-display');
+        if (userDisplay && usuario) {
+            const donde = locationLabel || window.djLocationLabel;
+            userDisplay.innerHTML = '<span class="user-icon">👤</span>' + escapeHtml(usuario.username)
+                + (donde ? ' <span class="user-location">📍 ' + escapeHtml(donde) + '</span>' : '');
+        }
+        const userInfo = document.getElementById('user-info');
+        if (userInfo) userInfo.style.display = 'flex';
+
+        const overlay = document.getElementById('auth-overlay');
+        if (overlay) overlay.classList.add('hidden');
+
+        if (typeof window.djPendingInit === 'function') {
+            window.djPendingInit();
+            window.djPendingInit = null;
+        }
+    }
+
+    // ── Salir: se cierra la sesión de la puerta, no una propia ──────────────
+    function doLogout() {
+        clearToken();
+        location.href = '/logout.php';
+    }
+
+    // ── Inicio ──────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', async function () {
-        // Cablear botones del header
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) logoutBtn.addEventListener('click', doLogout);
 
-        // Cablear tabs
-        document.getElementById('auth-tab-login').addEventListener('click', () => showView('login'));
-        document.getElementById('auth-tab-register').addEventListener('click', () => showView('register'));
+        estado('Identificando…', 'Leyendo tu sesión.', false);
 
-        // Cablear botones de formulario
-        document.getElementById('auth-login-btn').addEventListener('click', doLogin);
-        document.getElementById('auth-register-btn').addEventListener('click', doRegister);
+        try {
+            usuario = await cargarIdentidad();
+        } catch (e) {
+            estado('No se pudo leer tu identidad', String(e.message || e), true);
+            return;
+        }
+        if (!usuario) return; // ya se redirigió al login
 
-        // Enter en inputs
-        ['auth-username', 'auth-password'].forEach(id => {
-            document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-        });
-        ['reg-username', 'reg-password'].forEach(id => {
-            document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(); });
-        });
+        const ok = await enlazarConBackend(false);
 
-        // Verificar token guardado — el overlay ya es visible por defecto,
-        // launchApp() lo oculta si el token es válido
-        await checkExistingToken();
+        // Si el backend no estaba, seguir intentándolo sin molestar al usuario.
+        if (!ok) {
+            const reloj = setInterval(async () => {
+                if (window.djAuthenticated) { clearInterval(reloj); return; }
+                if (await enlazarConBackend(true)) clearInterval(reloj);
+            }, REINTENTO_MS);
+        }
     });
 })();

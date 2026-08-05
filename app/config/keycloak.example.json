@@ -1,0 +1,6 @@
+{
+  "_comentario": "Copiar a keycloak.json y rellenar paseSecret con el MISMO valor que 'pase_secret' del config.php de la puerta (dj.mingod.es). keycloak.json NO se versiona. Alternativa: variables KC_CLIENT_ID / KC_PASE_SECRET / KC_API_URL, que tienen prioridad. Este servidor ya no necesita el client_secret de Keycloak: el login ocurre en la web.",
+  "apiUrl": "https://api.mingod.es",
+  "clientId": "djdiscord",
+  "paseSecret": ""
+}
